@@ -37,10 +37,11 @@ Mechanics
 
 .. autosummary::
 
-   StateNearlyIncompressible
+   mechanics.StateNearlyIncompressible
    mechanics.Assemble
    mechanics.Evaluate
    mechanics.Results
+   mechanics.UpdateItem
 
 **Detailed API Reference**
    
@@ -109,7 +110,7 @@ Mechanics
    :undoc-members:
    :inherited-members:
    
-.. autoclass:: felupe.StateNearlyIncompressible
+.. autoclass:: felupe.mechanics.StateNearlyIncompressible
    :members:
    :undoc-members:
    :inherited-members:
@@ -128,3 +129,9 @@ Mechanics
    :members:
    :undoc-members:
    :inherited-members:
+
+.. autoclass:: felupe.mechanics.UpdateItem
+   :members:
+   :undoc-members:
+   :inherited-members:
+   

@@ -16,9 +16,10 @@ You should have received a copy of the GNU General Public License
 along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
 """
 import numpy as np
+from scipy.sparse import csr_matrix
 
 from ..assembly import IntegralForm
-from ..mechanics import Assemble, Results
+from ..mechanics import Assemble, Results, UpdateItem
 
 
 class SolidBodySurfaceHeatTransfer:
@@ -29,7 +30,7 @@ class SolidBodySurfaceHeatTransfer:
     field : felupe.FieldContainer
         The field container with the temperature as first field.
     coefficient : float
-        The convection coefficient :math:`h` in W/(m^2*K).
+        The convection coefficient :math:`h` in W/(m^2 K).
     temperature : float
         The ambient temperature :math:`T_\infty` in °C or K.
 
@@ -46,6 +47,7 @@ class SolidBodySurfaceHeatTransfer:
     ..  pyvista-plot::
 
         >>> import felupe as fem
+        >>> import numpy as np
         >>>
         >>> mesh = fem.Rectangle(n=11)
         >>> region = fem.RegionQuad(mesh)
@@ -73,11 +75,14 @@ class SolidBodySurfaceHeatTransfer:
         ...     temperature=10.0,  # °C
         ... )
         >>> time = fem.thermal.TimeStep([solid])
-        >>> table = fem.math.linsteps([0, 1], num=10)
+        >>> table = fem.math.linsteps([0, 1], num=15)
+        >>> air_temperature = fem.math.linsteps([0, 40], num=15)  # air temperature
+        >>> coefficient = fem.math.linsteps([7.0, 8.0], num=15)  # heat transfer coeff.
         >>> ramp = {
         ...     boundaries["left"]: 10 * table,  # surface temperature
         ...     time: 18000 * table,  # five hours
-        ...     heat_transfer: 40 * table,  # air temperature w/ transfer coeff.
+        ...     heat_transfer["temperature"]: air_temperature,
+        ...     heat_transfer["coefficient"]: coefficient,
         ... }
         >>> step = fem.Step(
         ...     items=[time, solid, heat_transfer], ramp=ramp, boundaries=boundaries
@@ -97,12 +102,13 @@ class SolidBodySurfaceHeatTransfer:
     --------
     felupe.thermal.TimeStep : A time step item.
     felupe.thermal.SolidBodyThermal : A thermal solid body for heat conduction.
-    felupe.thermal.SolidBodyThermalHeatFlux : A thermal solid body for heat flux.
+    felupe.thermal.SolidBodyHeatFlux : A thermal solid body for heat flux.
 
     """
 
     def __init__(self, field, coefficient, temperature):
         self.field = field
+        self.time_step = None
 
         self.results = Results()
         self.results.temperature = temperature
@@ -112,12 +118,24 @@ class SolidBodySurfaceHeatTransfer:
             vector=self._vector, matrix=self._matrix, multiplier=-1.0
         )
 
+    def __getitem__(self, key):
+        return UpdateItem(self, key)
+
     def update(self, temperature):
+        self._update_temperature(temperature)
+
+    def _update_temperature(self, temperature):
         self.results.temperature = temperature
+
+    def _update_coefficient(self, coefficient):
+        self.results.coefficient = coefficient
 
     def _vector(self, field=None, **kwargs):
         if field is not None:
             self.field = field
+
+        if self.time_step is not None and self.time_step == 0:  # inactive time step
+            return csr_matrix(([0.0], ([0], [0])), shape=(1, 1))
 
         temperature = self.field.extract(grad=False)[0]
         fun = [-self.results.coefficient * (temperature - self.results.temperature)]
@@ -131,6 +149,9 @@ class SolidBodySurfaceHeatTransfer:
     def _matrix(self, field=None, **kwargs):
         if field is not None:
             self.field = field
+
+        if self.time_step is not None and self.time_step == 0:  # inactive time step
+            return csr_matrix(([0.0], ([0], [0])), shape=(1, 1))
 
         dim = self.field[0].dim
         fun = [-self.results.coefficient * np.eye(dim).reshape(dim, dim, 1, 1)]

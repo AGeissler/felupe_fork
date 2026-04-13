@@ -2,8 +2,8 @@ Project cell values to mesh-points
 ----------------------------------
 
 This section demonstrates how to move cell-values, located at the quadrature points
-of cells, to mesh-points. The results of :func:`~felupe.project`,
-:func:`~felupe.topoints` and :func:`~felupe.tools.extrapolate` are compared for the
+of cells, to mesh-points. The results of :func:`~felupe.topoints`,
+:func:`~felupe.tools.extrapolate` and :func:`~felupe.project` are compared for the
 Cauchy stresses of a rectangular block under compression.
 
 ..  pyvista-plot::
@@ -22,29 +22,91 @@ Cauchy stresses of a rectangular block under compression.
     job = fem.Job(steps=[fem.Step(items=[solid], boundaries=boundaries)]).evaluate()
 
 Cell-based results, like Cauchy stresses, are not projected to mesh-points by default.
-Different methods may be used to *move* the cell-data to the mesh-points.
+The means of the cell-values are plotted if no projection method is specified. Different
+methods may be used to *move* the cell-data to the mesh-points.
 
-..  code-block::
+* With :func:`~felupe.topoints`, the cell-values are translated to and averaged at the
+  mesh-points.
 
-    import pyvista as pv
-    
-    plotter = pv.Plotter(shape=(2, 2))
-    kwargs = dict(name="Cauchy Stress", component=1, plotter=plotter)
-    
-    plotter.subplot(0, 0)
-    kwargs_sbar = dict(interactive=False, title="Cauchy Stress YY (None)")
-    solid.plot(project=None, **kwargs, scalar_bar_args=kwargs_sbar)
-    
-    plotter.subplot(0, 1)
-    kwargs_sbar = dict(interactive=False, title="Cauchy Stress YY (topoints)")
-    solid.plot(project=fem.topoints, **kwargs, scalar_bar_args=kwargs_sbar)
-    
-    plotter.subplot(1, 0)
-    kwargs_sbar = dict(interactive=False, title="Cauchy Stress YY (project)")
-    solid.plot(project=fem.project, **kwargs, scalar_bar_args=kwargs_sbar)
-    
-    plotter.subplot(1, 1)
-    kwargs_sbar = dict(interactive=False, title="Cauchy Stress YY (extrapolate)")
-    solid.plot(project=fem.tools.extrapolate, **kwargs, scalar_bar_args=kwargs_sbar)
-    
-    plotter.show()
+* With :func:`~felupe.tools.extrapolate`, the cell-values are extrapolated to the mesh-
+  points by evaluating the cell-values at the quadrature points of the cells and
+  extrapolating them to the mesh-points.
+  
+* With :func:`~felupe.project`, the cell-values are projected to the mesh-points by
+  solving a least-squares problem.
+
+..  tab:: Average at cells (default)
+
+    ..  pyvista-plot::
+        :context:
+        :force_static:
+
+        stress = solid.evaluate.cauchy_stress()[1, 1]
+        data = stress.mean(axis=0)
+        annotations = {data.min(): "Min.", data.max(): "Max."}
+
+        plotter = solid.plot(
+            name="Cauchy Stress", 
+            label="Cauchy Stress YY",
+            component=1,
+            project=None,
+            clim=[-7.0, 0.0],
+            annotations=annotations,
+        ).show()
+
+..  tab:: Shift to points
+
+    ..  pyvista-plot::
+        :context:
+        :force_static:
+
+        stress = solid.evaluate.cauchy_stress()[1, 1]
+        data = fem.topoints(stress, region)
+        annotations = {data.min(): "Min.", data.max(): "Max."}
+
+        plotter = solid.plot(
+            name="Cauchy Stress", 
+            label="Cauchy Stress YY (topoints)",
+            component=1,
+            project=fem.topoints,
+            clim=[-7.0, 0.0],
+            annotations=annotations,
+        ).show()
+
+..  tab:: Extrapolate to points
+
+    ..  pyvista-plot::
+        :context:
+        :force_static:
+
+        stress = solid.evaluate.cauchy_stress()[1, 1]
+        data = fem.tools.extrapolate(stress, region)
+        annotations = {data.min(): "Min.", data.max(): "Max."}
+
+        plotter = solid.plot(
+            name="Cauchy Stress", 
+            label="Cauchy Stress YY (extrapolate)",
+            component=1,
+            project=fem.tools.extrapolate,
+            clim=[-7.0, 0.0],
+            annotations=annotations,
+        ).show()
+
+..  tab:: Project to points
+
+    ..  pyvista-plot::
+        :context:
+        :force_static:
+
+        stress = solid.evaluate.cauchy_stress()[1, 1]
+        data = fem.project(stress, region)
+        annotations = {data.min(): "Min.", data.max(): "Max."}
+
+        plotter = solid.plot(
+            name="Cauchy Stress", 
+            label="Cauchy Stress YY (project)",
+            component=1,
+            project=fem.project,
+            clim=[-7.0, 0.0],
+            annotations=annotations,
+        ).show()
