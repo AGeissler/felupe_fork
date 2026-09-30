@@ -28,10 +28,25 @@ from ._line_rectangle_cube import line_line as _line_line
 from ._line_rectangle_cube import rectangle_quad as _rectangle_quad
 from ._mesh import Mesh
 from ._read import read
-from ._tools import concatenate, expand, fill_between, flip, merge_duplicate_cells
+from ._tools import (
+    concatenate,
+    expand,
+    extrude,
+    fill_between,
+    flip,
+    merge_duplicate_cells,
+)
 from ._tools import merge_duplicate_points
 from ._tools import merge_duplicate_points as sweep
-from ._tools import mirror, revolve, rotate, runouts, stack, translate, triangulate
+from ._tools import (
+    mirror,
+    revolve,
+    rotate,
+    runouts,
+    stack,
+    translate,
+    triangulate,
+)
 
 __all__ = [
     "_cube_hexa",
@@ -60,6 +75,7 @@ __all__ = [
     "read",
     "concatenate",
     "expand",
+    "extrude",
     "flip",
     "fill_between",
     "interpolate_line",

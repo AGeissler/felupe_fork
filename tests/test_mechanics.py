@@ -907,6 +907,7 @@ def test_job_plugins():
         filename="result.mp4",
         name="Principal Values of Cauchy Stress",
         off_screen=True,
+        colors=["lightblue"],
     )
 
     job = fem.Job(
@@ -929,6 +930,39 @@ def test_job_plugins():
 
     fig, ax = curve.plot(gradient=True, swapaxes=True, xlabel="x", ylabel="y")
     plt.close(fig)
+
+
+def test_thirdmediumcontactmixed():
+
+    mesh = fem.Rectangle(n=3)
+    region = fem.RegionQuad(mesh)
+
+    for FieldDisplacement in [fem.FieldAxisymmetric, fem.FieldPlaneStrain]:
+        field = fem.FieldContainer(
+            [
+                FieldDisplacement(region, dim=2),  # F
+                fem.Field(region, dim=9),  # theta
+            ],
+            take=[0, 1, 1],
+        )
+
+        neo_hooke = fem.NeoHooke(mu=1, bulk=20)
+        solid = fem.SolidBody(
+            umat=fem.ThirdMediumContactMixed(
+                material=neo_hooke,
+                gamma=1e-5,
+                alpha_r=1e-4,
+                p_r=1e-2,
+            ),
+            field=field,
+            grad=[True, False, True],
+        )
+
+        boundaries = fem.dof.uniaxial(
+            solid.field, clamped=True, sym=False, return_loadcase=False
+        )
+        step = fem.Step(items=[solid], boundaries=boundaries)
+        fem.Job(steps=[step]).evaluate()
 
 
 if __name__ == "__main__":

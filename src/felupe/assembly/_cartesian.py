@@ -176,7 +176,18 @@ class IntegralFormCartesian:
         field_is_2d = v.dim == 2
 
         if function_is_vector and function_is_3d and field_is_2d:
-            fun = fun[tuple([slice(2)] * function_dimension)]
+            if u is None:
+                fun = fun[tuple([slice(2)] * function_dimension)]
+            else:
+                # trim only the axes which belong to two-dimensional fields, i.e.
+                # the leading axes of v and the following axes of u
+                nv = int(v.dim > 1) + int(bool(grad_v))
+                nu = int(u.dim > 1) + int(bool(grad_u))
+                trim = [slice(None)] * function_dimension
+                trim[:nv] = [slice(2)] * nv
+                if u.dim == 2 and fun.shape[nv] == 3:
+                    trim[nv : nv + nu] = [slice(2)] * nu
+                fun = fun[tuple(trim)]
 
         if parallel:
             einsum = einsumt
@@ -206,13 +217,23 @@ class IntegralFormCartesian:
 
         else:
             if not grad_v and not grad_u:
-                res = einsum(
-                    "aqc,...qc,bqc,qc->a...bc", vb, fun, ub, dV, optimize=True, out=out
-                )
-                if len(res.shape) == 5:
+                res = einsum("aqc,...qc,bqc,qc->a...bc", vb, fun, ub, dV, optimize=True)
+                extra_axes = len(res.shape) - 3  # (a, b, c) are always present
+                if extra_axes == 4:
+                    return einsum("aijklbc->aijbklc", res, out=out)
+                elif extra_axes == 2:
                     return einsum("aijbc->aibjc", res, out=out)
-                else:
+                elif extra_axes in (0, 1):
+                    if out is not None:
+                        out[...] = res
+                        return out
                     return res
+                else:
+                    raise ValueError(
+                        f"Unexpected number of extra axes: {extra_axes}. "
+                        "Each field with dim > 1 is allowed to contribute at most one "
+                        "extra axis."
+                    )
             elif grad_v and not grad_u:
                 return einsum(
                     "aJqc,iJ...qc,bqc,qc->aib...c",

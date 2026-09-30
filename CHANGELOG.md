@@ -4,12 +4,45 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Add `mesh.extrude(mesh, path, other_mesh=None)` and `Mesh.extrude(path, other_mesh=None)` to extrude a line- or quad-mesh along a given path. The section is transported by rotation-minimizing frames and its initial orientation w.r.t. the tangent of the path is preserved. Optionally, the section is interpolated between two meshes.
+- Add `constitution.ThirdMediumContactMixed`, a mixed-formulation for a stabilized third medium contact.
+
+### Fixed
+- Fix the assembly of bilinear forms with plane-strain fields and additional vector-valued fields in `IntegralFormCartesian`. Only the axes of two-dimensional fields are trimmed, e.g. a coupling block of shape `(3, 3, 9)` is now trimmed to `(2, 2, 9)` instead of `(2, 2, 2)`.
+- Fix the assembly of mixed-field formulations in `IntegralFormAxisymmetric`: the gradient flags of non-axisymmetric fields are now passed to the linear and bilinear forms, empty (`None`) blocks of bilinear forms are supported and an axisymmetric field may be coupled with a vector-valued field.
+- Fix re-used output arrays in `NeoHooke.gradient(x, out=P)` and `NeoHooke.hessian(x, out=A4)`: the arrays are now reset with `fill(0.0)`. Before, `P` was not reset at all (wrong, accumulated stresses for `NeoHooke(mu=None, bulk=...)`) and `A4` was multiplied by zero, which kept NaN and inf values in the output array.
+
+## [11.1.3] - 2026-09-28
+
+### Fixed
+- Fix typos, which lead to wrong results, in `Hexahedron.hessian()` for points 3 and 5.
+
+## [11.1.2] - 2026-09-27
+
+### Fixed
+- Fix Hessian evaluation in `Region`, the contribution from `d2Xdrdr` was missing.
+
+## [11.1.1] - 2026-09-25
+
+### Fixed
+- Only increase an assembled sparse vector / matrix, do not trim the shape. This will raise an error now to avoid wrong results.
+- Restrict `field.merge()` to accept single-field field containers only, otherwise, a type error will be raised to avoid wrong results.
+- Fix wrong shape in `ContactRigidPlane`, shape is now `(mesh.ndof, 1)`, was `(mesh.ndof, mesh.dim)` before.
+
+## [11.1.0] - 2026-09-24
+
+### Added
 - Add missing modes (combinations of boolean `grad_v` and `grad_u`) to `IntegralFormAxisymmetric`.
 - Add `SolidBody(..., grad=None)`, an additional argument to define which fields of the field container should use their gradients. By default, the first (displacement) field uses the gradient, and the other fields use their field values (no gradient).
 - Add `FieldDual(..., calc_points=None)` to calculate the points array for a dual mesh.
+- Add `FieldContainer(..., take=None)`, where take is a list of field indices to be used for `FieldContainer.extract()`.
+- Add `AnimationWriterPlugin(..., colors=None)` to use custom colors for the items.
 
 ### Changed
 - Change the default boolean value of `FieldContainer(..., add_identity=True)`: the identity matrix will now only be applied to the gradient of the first field (applied to all gradients before). The addition of the identity matrix can now be turned on/off individually per-field with a list of boolean flags.
+
+### Fixed
+- Fix the assembly of integral forms with both non-gradients on v and u for different numbers of trailing axes and the out-argument is used. Also, a value error is now raised if the shape is wrong.
 
 ## [11.0.0] - 2026-09-07
 
