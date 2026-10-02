@@ -161,6 +161,8 @@ class ProgressPlugin(Plugin):
 
         if self.in_job:
             if self.progress_bar_newton is not None:
+                # a reset of the progress bar keeps the postfix (step length)
+                self.progress_bar_newton.set_postfix_str("", refresh=False)
                 self.progress_bar_newton.reset()
         else:
             self._create_progress_bars_or_header(context)
@@ -212,14 +214,30 @@ class ProgressPlugin(Plugin):
                 self.progress0,
                 np.clip(100 * completion, 0, 100).astype(int),
             )
+            # show the step length, e.g. of a line search (only if reduced). A reduced
+            # step length is shown immediately, the (empty) postfix of a full step on
+            # the next refresh of the progress bar.
+            alpha = getattr(state, "alpha", None)
+            reduced = alpha is not None and alpha < 1
+            postfix = f"alpha={alpha:.4g}" if reduced else ""
+            self.progress_bar_newton.set_postfix_str(postfix, refresh=reduced)
+
             self.progress_bar_newton.update(self.progress - self.progress0)
             self.progress0 = self.progress
 
         if self.verbose == 2:
-            print(
-                "|%2d | %1.3e | %1.3e |"
-                % (1 + state.iteration, state.fnorm, state.xnorm)
+            row = "|%2d | %1.3e | %1.3e |" % (
+                1 + state.iteration,
+                state.fnorm,
+                state.xnorm,
             )
+
+            # show the step length, e.g. of a line search (only if reduced)
+            alpha = getattr(state, "alpha", None)
+            if alpha is not None and alpha < 1:
+                row += " alpha=%.4g" % alpha
+
+            print(row)
 
     def after_newton(self, context, state):
 
@@ -238,14 +256,26 @@ class ProgressPlugin(Plugin):
             )
 
     def after_substep(self, context, state):
+        # the load factors of the increments of a subdivided substep, e.g. of a cutback
+        load_factors = getattr(state, "load_factors", None)
+
         if self.verbose == 1:
+            postfix = f"increments={len(load_factors)}" if load_factors else ""
+            self.progress_bar.set_postfix_str(postfix, refresh=False)
             self.progress_bar.update(1)
 
         if self.verbose == 2:
             _substep = f"Substep {state.substepnumber + 1}/{context.step.nsubsteps}"
             _step = f"Step {state.stepnumber + 1}/{len(context.job.steps)}"
+            _increments = ""
 
-            print(f"{_substep} of {_step} successful.")
+            if load_factors:
+                factors = ", ".join(f"{t:.4g}" for t in load_factors)
+                _increments = (
+                    f" in {len(load_factors)} increments (load factors {factors})"
+                )
+
+            print(f"{_substep} of {_step} successful{_increments}.")
 
     def after_job(self, context, state):
         self.in_job = False
