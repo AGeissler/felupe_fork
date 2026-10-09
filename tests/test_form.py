@@ -178,6 +178,8 @@ def test_linearform():
     for parallel in [False, True]:
         L = fem.IntegralForm(P, u, r.dV, grad_v=[True])
         x = L.integrate(parallel=parallel)
+        y = np.einsum("aJqc,iJqc,qc->aic", r.dhdX, P[0], r.dV, optimize=True)
+        assert np.allclose(x[0], y)
         b = L.assemble(x, parallel=parallel).toarray()
         assert b.shape == (r.mesh.ndof, 1)
         b = L.assemble(parallel=parallel).toarray()
@@ -283,6 +285,190 @@ def test_bilinearform_broadcast():
         assert K.shape == (r.mesh.npoints, r.mesh.npoints)
 
 
+def test_bilinearform_grad_grad_chunks():
+    "The chunked evaluation of the gradient-gradient form matches a single einsum."
+
+    import felupe.assembly._cartesian as cartesian
+
+    mesh = fem.Cube(n=4)
+    region = fem.RegionHexahedron(mesh)
+    field = fem.FieldContainer([fem.Field(region, dim=3)])
+    field[0].values[:] = 0.1 * mesh.points**2
+
+    F = field.extract()
+    hessians = [
+        fem.NeoHooke(mu=1.0, bulk=2.0).hessian(F)[0],  # one tensor per point
+        fem.LinearElastic(E=1.0, nu=0.3).hessian()[0],  # broadcasted tensor
+    ]
+
+    chunksize_bytes = cartesian.CHUNKSIZE_BYTES
+
+    try:
+        for A in hessians:
+            expected = np.einsum(
+                "aJqc,iJkLqc,bLqc,qc->aibkc", region.dhdX, A, region.dhdX, region.dV
+            )
+
+            # chunks of one cell, chunks of 7 of 27 cells and a single chunk
+            for nbytes in [1, 200_000, 2**30]:
+                cartesian.CHUNKSIZE_BYTES = nbytes
+
+                form = fem.IntegralForm([A], field, region.dV, field)
+
+                for parallel in [False, True]:
+                    values = form.integrate(parallel=parallel)[0]
+                    assert np.allclose(values, expected)
+
+                    out = np.zeros_like(expected)
+                    values = form.integrate(parallel=parallel, out=[out])[0]
+                    assert values is out
+                    assert np.allclose(out, expected)
+
+    finally:
+        cartesian.CHUNKSIZE_BYTES = chunksize_bytes
+
+
+def test_bilinearform_grad_grad_threads(monkeypatch):
+    "The chunks are evaluated by threads (one per usable CPU, at most one per chunk)."
+
+    import os
+
+    import felupe.assembly._cartesian as cartesian
+
+    monkeypatch.setattr(cartesian, "CHUNKSIZE_BYTES", 200_000)  # 4 chunks of 27 cells
+
+    # the number of usable CPUs, also without the newer functions of os
+    assert cartesian.cpu_count() >= 1
+    monkeypatch.delattr(os, "process_cpu_count", raising=False)
+    assert cartesian.cpu_count() >= 1
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    assert cartesian.cpu_count() >= 1
+
+    mesh = fem.Cube(n=4)
+    region = fem.RegionHexahedron(mesh)
+    field = fem.FieldContainer([fem.Field(region, dim=3)])
+    A = fem.NeoHooke(mu=1.0, bulk=2.0).hessian(field.extract())[0]
+
+    form = fem.IntegralForm([A], field, region.dV, field)
+    expected = form.integrate(parallel=False)[0]
+
+    # one thread (serial), less threads than chunks and more CPUs than chunks
+    for cpus in [1, 2, 64]:
+        monkeypatch.setattr(cartesian, "cpu_count", lambda: cpus)
+        assert np.allclose(form.integrate(parallel=True)[0], expected)
+
+
+def test_sparsity_pattern():
+    "The assembly with a cached sparsity pattern is equal to the COO-assembly."
+
+    import gc
+    import weakref
+
+    from scipy.sparse import coo_matrix
+
+    from felupe.assembly._sparsity import _patterns, sparsity_pattern
+
+    mesh = fem.Cube(n=4)
+    region = fem.RegionHexahedron(mesh)
+    rng = np.random.default_rng(0)
+
+    def assemble_coo(values, v, u):
+        "Assemble the (duplicate) values of shape (a, i, b, k, c) in COO-format."
+        rows = v.indices.cai.transpose(1, 2, 0)[:, :, None, None, :]
+        cols = u.indices.cai.transpose(1, 2, 0)[None, None, :, :, :]
+        rows, cols = [np.broadcast_to(x, values.shape).ravel() for x in [rows, cols]]
+        shape = (v.indices.shape[0], u.indices.shape[0])
+        matrix = coo_matrix((values.ravel(), (rows, cols)), shape=shape).tocsr()
+        matrix.sort_indices()
+        return matrix
+
+    displacement = fem.Field(region, dim=3)
+    pressure = fem.Field(region, dim=1)
+
+    for v, u in [
+        (displacement, displacement),
+        (displacement, pressure),
+        (pressure, displacement),
+        (pressure, pressure),
+    ]:
+        shape = (8, v.dim, 8, u.dim, mesh.ncells)
+        values = rng.normal(size=shape)
+        form = fem.assembly.IntegralFormCartesian(values, v, region.dV, u=u)
+
+        matrix = form.assemble(values=values)
+        expected = assemble_coo(values, v, u)
+
+        assert matrix.has_canonical_format
+        assert np.array_equal(matrix.indptr, expected.indptr)
+        assert np.array_equal(matrix.indices, expected.indices)
+        assert np.allclose(matrix.data, expected.data)
+
+        # the cached pattern is not modified by in-place changes of the matrix
+        matrix.indices[:] = 0
+        matrix = form.assemble(values=values)
+        assert np.array_equal(matrix.indices, expected.indices)
+
+        # broadcasted values of a uniform grid mesh
+        matrix = form.assemble(values=values[..., :1])
+        expected = assemble_coo(np.broadcast_to(values[..., :1], shape), v, u)
+        assert np.allclose(matrix.toarray(), expected.toarray())
+
+    # the pattern is cached and not copied with the field
+    field = fem.Field(region, dim=3)
+    assert sparsity_pattern(field, field) is sparsity_pattern(field, field)
+    assert field.indices in _patterns
+    assert field.copy().indices not in _patterns
+
+    # the cache does not keep the indices alive, the pattern is released with them
+    indices = weakref.ref(field.indices)
+    del field
+    gc.collect()
+    assert indices() is None
+
+    # fall back to the COO-assembly for degrees of freedom which are not point-wise
+    field = fem.Field(region, dim=3)
+    field.indices.cai = field.indices.cai[..., ::-1]
+    assert sparsity_pattern(field, field) is None
+
+    shape = (8, 3, 8, 3, mesh.ncells)
+    values = rng.normal(size=shape)
+    form = fem.assembly.IntegralFormCartesian(values, field, region.dV, u=field)
+    matrix = form.assemble(values=values)
+    assert np.allclose(matrix.toarray(), assemble_coo(values, field, field).toarray())
+
+
+def test_single_block():
+    "A single block is returned without the block-assembly."
+
+    from scipy.sparse import bmat, vstack
+
+    r, u, p, P, A = pre()
+
+    a = fem.IntegralForm(A, u, r.dV, u)
+    K = a.assemble()
+    assert K.format == "csr"
+    assert np.allclose(K.toarray(), bmat([[a.forms[0].assemble()]]).toarray())
+
+    L = fem.IntegralForm(P, u, r.dV)
+    b = L.assemble()
+    assert b.format == "csr"
+    assert np.allclose(b.toarray(), vstack([L.forms[0].assemble()]).toarray())
+
+
+def test_bilinearform_lazy_indices():
+    "The COO-indices of a bilinear form are only evaluated on demand."
+
+    r, u, p, P, A = pre()
+
+    form = fem.IntegralForm(A, u, r.dV, u).forms[0]
+    form.assemble()
+    assert "indices" not in vars(form)  # not required with a sparsity pattern
+
+    rows, cols = form.indices
+    assert rows.size == cols.size == form.integrate().size
+    assert form.indices is form.indices  # evaluated only once
+
+
 def test_mixed():
     r, v, f, A = pre_mixed()
 
@@ -340,5 +526,9 @@ if __name__ == "__main__":
     test_linearform_broadcast()
     test_bilinearform()
     test_bilinearform_broadcast()
+    test_bilinearform_grad_grad_chunks()
+    test_sparsity_pattern()
+    test_single_block()
+    test_bilinearform_lazy_indices()
     test_axi()
     test_mixed()

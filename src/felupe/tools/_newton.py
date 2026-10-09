@@ -17,6 +17,7 @@ along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import inspect
+from copy import deepcopy
 from time import perf_counter
 
 import numpy as np
@@ -25,6 +26,8 @@ from scipy.sparse.linalg import spsolve
 
 from .. import solve as fesolve
 from ..assembly import IntegralForm
+from ..field import FieldContainer
+from ..field._container import shared_geometry_memo
 from ..math import norm
 from ._event_dispatcher import Context, EventDispatcher
 
@@ -316,7 +319,10 @@ def fun_items(items, x, parallel=False):
 
     # init vector with shape from global field
     shape = (np.sum(x.fieldsizes), 1)
-    vector = csr_matrix(shape)
+
+    # assume a matrix type based on the first field values
+    dtype = x.fields[0].values.dtype
+    vector = csr_matrix(shape, dtype=dtype)
 
     for body in items:
         # assemble vector
@@ -342,7 +348,10 @@ def jac_items(items, x, parallel=False):
 
     # init matrix with shape from global field
     shape = (np.sum(x.fieldsizes), np.sum(x.fieldsizes))
-    matrix = csr_matrix(shape)
+
+    # assume a matrix type based on the first field values
+    dtype = x.fields[0].values.dtype
+    matrix = csr_matrix(shape, dtype=dtype)
 
     for body in items:
         # assemble matrix
@@ -423,6 +432,14 @@ def check(dx, x, f, xtol, ftol, dof1=None, dof0=None, items=None, eps=1e-3):
 def update(x, dx):
     "Update field."
     # x += dx # in-place
+
+    if isinstance(x, FieldContainer):
+        # the new field container shares the regions, meshes and indices with the old
+        # one, only the field containers, the fields and their values are copied
+        x = deepcopy(x, shared_geometry_memo(x))
+        x += dx
+        return x
+
     return x + dx
 
 

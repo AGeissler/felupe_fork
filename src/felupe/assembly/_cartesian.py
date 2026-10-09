@@ -16,6 +16,10 @@ You should have received a copy of the GNU General Public License
 along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import os
+from concurrent.futures import ThreadPoolExecutor
+from functools import cached_property
+
 import numpy as np
 
 try:
@@ -24,6 +28,64 @@ except ModuleNotFoundError:
     from numpy import einsum as einsumt
 
 from scipy.sparse import csr_matrix as sparsematrix
+
+from ._sparsity import sparsity_pattern
+
+# Contraction path for the bilinear form of the gradients of the test and the trial
+# field, ``aJqc,iJkLqc,bLqc,qc->aibkc``: (1) multiply the test gradients by the
+# differential volumes, (2) contract the fourth-order tensor with the trial gradients
+# and (3) contract the two remaining arrays. NumPy's default path (``optimize=True``)
+# limits all intermediate arrays to the size of the largest input array. For many
+# element types, it contracts the last three operands at once, with a multiple of the
+# number of operations. As the intermediate arrays are evaluated in chunks of cells,
+# their size is limited anyway.
+PATH_GRAD_GRAD = ["einsum_path", (0, 3), (0, 1), (0, 1)]
+
+# Approximate number of bytes of all arrays which are processed per chunk of cells.
+# The arrays of a chunk should fit into the CPU caches, about the size of the L2 cache
+# of one core. Smaller chunks increase the overhead of the einsum-calls per chunk.
+CHUNKSIZE_BYTES = 2**21
+
+
+def cpu_count():
+    """Return the number of CPUs which may be used by the current process. Unlike
+    :func:`os.cpu_count`, this respects the CPU affinity of the process, e.g. the CPUs
+    of a job on a shared HPC-node. For Python 3.13+, the number of CPUs may be
+    overridden by the environment variable ``PYTHON_CPU_COUNT``."""
+
+    if hasattr(os, "process_cpu_count"):  # Python 3.13+
+        return os.process_cpu_count() or 1
+
+    if hasattr(os, "sched_getaffinity"):  # Linux
+        return len(os.sched_getaffinity(0))
+
+    return os.cpu_count() or 1
+
+
+def einsum_chunks(subscripts, *operands, out, chunksize, optimize, parallel=False):
+    """Evaluate :func:`numpy.einsum` in chunks of the last axis (the cells) and write
+    the results into the given output array. Operands with a broadcasted last axis
+    (length one) are not sliced. If ``parallel`` is True, the chunks are evaluated by
+    a pool of threads (one per usable CPU, at most one per chunk)."""
+
+    ncells = out.shape[-1]
+
+    def evaluate(start):
+        cells = slice(start, start + chunksize)
+        chunk = [x[..., cells] if x.shape[-1] == ncells else x for x in operands]
+        np.einsum(subscripts, *chunk, optimize=optimize, out=out[..., cells])
+
+    starts = range(0, ncells, chunksize)
+    workers = min(cpu_count(), len(starts)) if parallel else 1
+
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(evaluate, starts))
+    else:
+        for start in starts:
+            evaluate(start)
+
+    return out
 
 
 class IntegralFormCartesian:
@@ -123,16 +185,23 @@ class IntegralFormCartesian:
             self.indices = self.v.indices.ai
             self.shape = self.v.indices.shape
 
-        # # bilinear form
+        # # bilinear form (the indices are evaluated on demand)
         else:
-            cai = self.v.indices.cai
-            cbk = self.u.indices.cai
-
-            caibk0 = np.repeat(cai, cbk.shape[1] * self.u.dim)
-            caibk1 = np.tile(cbk, (1, cai.shape[1] * self.v.dim, 1)).ravel()
-
-            self.indices = (caibk0, caibk1)
             self.shape = (self.v.indices.shape[0], self.u.indices.shape[0])
+
+    @cached_property
+    def indices(self):
+        """The (row, column) indices of the values of a bilinear form in COO-format.
+        These are only required if the form is not assembled with a sparsity pattern.
+        """
+
+        cai = self.v.indices.cai
+        cbk = self.u.indices.cai
+
+        caibk0 = np.repeat(cai, cbk.shape[1] * self.u.dim)
+        caibk1 = np.tile(cbk, (1, cai.shape[1] * self.v.dim, 1)).ravel()
+
+        return caibk0, caibk1
 
     def assemble(self, values=None, parallel=False, out=None):
         "Assembly of sparse region vectors or matrices."
@@ -141,6 +210,13 @@ class IntegralFormCartesian:
             values = self.integrate(parallel=parallel, out=out)
 
         if values is not None:
+            # sum up the values of bilinear forms into a cached sparsity pattern
+            if self.u is not None:
+                pattern = sparsity_pattern(self.v, self.u)
+
+                if pattern is not None:
+                    return pattern.assemble(values)
+
             permute = np.append(
                 len(values.shape) - 1, range(len(values.shape) - 1)
             ).astype(int)
@@ -211,8 +287,9 @@ class IntegralFormCartesian:
                     "aqc,...qc,qc->a...c", vb, fun, dV, optimize=True, out=out
                 )
             else:
+                # a single contraction is faster than the default path
                 return einsum(
-                    "aJqc,...Jqc,qc->a...c", vb, fun, dV, optimize=True, out=out
+                    "aJqc,...Jqc,qc->a...c", vb, fun, dV, optimize=False, out=out
                 )
 
         else:
@@ -255,12 +332,28 @@ class IntegralFormCartesian:
                     out=out,
                 )
             else:  # grad_v and grad_u
-                return einsum(
+                operands = (vb, fun, ub, dV)
+                ncells = max(x.shape[-1] for x in operands)
+
+                a, J, q = vb.shape[:3]
+                b, L = ub.shape[:2]
+                i, k = fun.shape[0], fun.shape[2]
+
+                if out is None:
+                    shape = (a, i, b, k, ncells)
+                    out = np.empty(shape, dtype=np.result_type(*operands))
+
+                # number of array items per cell: intermediate (iJkbq), result (aibk),
+                # function (iJkLq), test and trial gradients (aJq, bLq), volumes (q)
+                size = i * J * k * b * q + a * i * b * k + fun[..., 0].size
+                size += a * J * q + b * L * q + q
+                chunksize = max(1, CHUNKSIZE_BYTES // (out.itemsize * size))
+
+                return einsum_chunks(
                     "aJqc,iJkLqc,bLqc,qc->aibkc",
-                    vb,
-                    fun,
-                    ub,
-                    dV,
-                    optimize=True,
+                    *operands,
                     out=out,
+                    chunksize=chunksize,
+                    optimize=PATH_GRAD_GRAD,
+                    parallel=parallel,
                 )
