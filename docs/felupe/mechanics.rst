@@ -50,6 +50,7 @@ Mechanics
    PointLoad
    MultiPointConstraint
    MultiPointContact
+   CartesianConstraint
    CylindricalConstraint
 
 **Contact**
@@ -57,12 +58,14 @@ Mechanics
 .. autosummary::
 
    ContactRigidPlane
+   ContactRigidCylinder
 
 **Helpers for Custom Items and State Variables**
 
 .. autosummary::
 
    mechanics.StateNearlyIncompressible
+   mechanics.ContactRigidBase
    mechanics.Assemble
    mechanics.Evaluate
    mechanics.Results
@@ -198,6 +201,11 @@ Mechanics
    :undoc-members:
    :inherited-members:
 
+.. autoclass:: felupe.CartesianConstraint
+   :members:
+   :undoc-members:
+   :inherited-members:
+
 .. autoclass:: felupe.CylindricalConstraint
    :members:
    :undoc-members:
@@ -208,7 +216,17 @@ Mechanics
    :undoc-members:
    :inherited-members:
 
+.. autoclass:: felupe.ContactRigidCylinder
+   :members:
+   :undoc-members:
+   :inherited-members:
+
 .. autoclass:: felupe.mechanics.StateNearlyIncompressible
+   :members:
+   :undoc-members:
+   :inherited-members:
+
+.. autoclass:: felupe.mechanics.ContactRigidBase
    :members:
    :undoc-members:
    :inherited-members:
