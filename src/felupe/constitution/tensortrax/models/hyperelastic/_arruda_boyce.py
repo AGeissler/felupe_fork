@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from tensortrax.math import sum as tsum
 from tensortrax.math import trace
@@ -39,7 +23,7 @@ def arruda_boyce(C, C1, limit):
     Notes
     -----
     The strain energy function is given in Eq. :eq:`psi-ab`
-    
+
     ..  math::
         :label: psi-ab
 
@@ -47,41 +31,41 @@ def arruda_boyce(C, C1, limit):
 
     with the first main invariant of the distortional part of the right
     Cauchy-Green deformation tensor as given in Eq. :eq:`invariants-ab`
-    
+
     ..  math::
         :label: invariants-ab
-    
+
         \hat{I}_1 = J^{-2/3} \text{tr}\left( \boldsymbol{C} \right)
-    
+
     and :math:`\alpha_i` and :math:`\beta` as denoted in Eq. :eq:`ab-param`.
-    
+
     ..  math::
         :label: ab-param
-        
-        \boldsymbol{\alpha} &= \begin{bmatrix} 
-            \frac{1}{2} \\ 
+
+        \boldsymbol{\alpha} &= \begin{bmatrix}
+            \frac{1}{2} \\
             \frac{1}{20} \\
             \frac{11}{1050} \\
             \frac{19}{7000} \\
             \frac{519}{673750}
         \end{bmatrix}
-        
+
         \beta &= \frac{1}{\lambda_m^2}
-    
+
     The initial shear modulus is a function of both material parameters, see Eq.
     :eq:`shear-modulus-ab`.
-    
+
     ..  math::
         :label: shear-modulus-ab
-        
-        \mu = C_1 \left( 
-            1 + \frac{3}{5 \lambda_m^2} + \frac{99}{175 \lambda_m^4} 
-              + \frac{513}{875 \lambda_m^6} + \frac{42039}{67375 \lambda_m^8} 
+
+        \mu = C_1 \left(
+            1 + \frac{3}{5 \lambda_m^2} + \frac{99}{175 \lambda_m^4}
+              + \frac{513}{875 \lambda_m^6} + \frac{42039}{67375 \lambda_m^8}
         \right)
 
     Examples
     --------
-    
+
     ..  plot::
 
         >>> import felupe as fem

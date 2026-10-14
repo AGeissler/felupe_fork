@@ -1,26 +1,9 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
-from ._tensor import dot, eigh, eigvalsh
+from ._tensor import dot, eigh, eigvalsh, transpose
 from ._tensor import tovoigt as tensor_to_vector
-from ._tensor import transpose
 
 
 def displacement(field, dim=3, n=0):
@@ -139,7 +122,7 @@ def strain(
 
        \boldsymbol{E} = \sum_\alpha E_\alpha \
            \boldsymbol{N}_\alpha \otimes \boldsymbol{N}_\alpha
-    
+
     See Also
     -------
     math.strain_stretch_1d : Compute the Seth-Hill strains.

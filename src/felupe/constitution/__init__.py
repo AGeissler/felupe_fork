@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from ._base import CompositeMaterial, ConstitutiveMaterial, constitutive_material
 from ._kinematics import AreaChange, LineChange, VolumeChange
 from ._material import Material
@@ -58,9 +60,13 @@ __all__ = [
     "ThirdMediumContactMixed",
 ]
 try:
-    from .tensortrax import Hyperelastic
+    from .tensortrax import (
+        Hyperelastic,
+        isochoric_volumetric_split,
+        total_lagrange,
+        updated_lagrange,
+    )
     from .tensortrax import Material as MaterialAD
-    from .tensortrax import isochoric_volumetric_split, total_lagrange, updated_lagrange
     from .tensortrax.models.hyperelastic import (
         alexander,
         anssari_benam_bucchi,

@@ -1,27 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+from functools import partial
 
 import numpy as np
 
-try:
-    from einsumt import einsumt
-except ModuleNotFoundError:
-    from numpy import einsum as einsumt
+from ...math._einsum import einsum_chunks
 
 
 class BasisArray(np.ndarray):
@@ -44,8 +27,8 @@ class BasisArray(np.ndarray):
         >>> import felupe as fem
         >>>
         >>> x = fem.assembly.expression.BasisArray(
-        >>>     np.ones(3), grad=np.zeros((3, 3)), hess=np.zeros((3, 3, 3))
-        >>> )
+        ...     np.ones(3), grad=np.zeros((3, 3)), hess=np.zeros((3, 3, 3))
+        ... )
         >>> x
         BasisArray([1., 1., 1.])
 
@@ -134,7 +117,7 @@ class BasisField:
         >>> import felupe as fem
         >>>
         >>> mesh = fem.Rectangle()
-        >>> region = fem.RegionQuad(mesh)
+        >>> region = fem.RegionQuad(mesh, hess=True)
         >>> displacement = fem.Field(region, dim=2)
         >>>
         >>> bf = fem.assembly.expression.BasisField(displacement)
@@ -157,7 +140,7 @@ class BasisField:
     def __init__(self, field, parallel=False):
         self.field = field
 
-        einsum = einsumt if parallel else np.einsum
+        einsum = partial(einsum_chunks, parallel=parallel)
 
         basis = einsum(
             "ij,aqc->aijqc",
@@ -205,13 +188,13 @@ class Basis:
         >>> import felupe as fem
         >>>
         >>> mesh = fem.Rectangle()
-        >>> region = fem.RegionQuad(mesh)
+        >>> region = fem.RegionQuad(mesh, hess=True)
         >>> displacement = fem.Field(region, dim=2)
         >>> field = fem.FieldContainer([displacement])
         >>>
         >>> bases = fem.assembly.expression.Basis(field)
         >>> len(bases[:])
-        >>> 1
+        1
 
         >>> bases[0].basis.shape
         (4, 2, 2, 4, 1)

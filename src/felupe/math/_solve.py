@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
@@ -69,11 +53,11 @@ def solve_nd(A, b, solve=np.linalg.solve, n=1, **kwargs):
     array([[[ 0.63499407, -1.32830401, -1.14593   ],
             [ 1.38045295, -1.03504171,  0.02272754],
             [-0.40106257,  1.6447736 ,  1.87685462]],
-
+    <BLANKLINE>
            [[ 0.22602567,  0.53675077,  0.37876301],
             [-0.5807506 ,  1.20191896,  0.46334835],
             [-0.90352229,  0.45065787, -0.53026653]],
-
+    <BLANKLINE>
            [[ 0.3551602 , -1.06411506,  0.01788346],
             [-1.33151311,  1.76817965,  0.00544784],
             [ 0.67065754,  0.43405431, -1.67714269]]])

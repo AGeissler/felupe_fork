@@ -1,20 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
 from functools import wraps
 
 import jax
@@ -66,11 +51,11 @@ def total_lagrange(material):
     >>> import jax.numpy as jnp
     >>>
     >>> @mat.total_lagrange
-    >>> def neo_hooke_total_lagrange(F, mu=1):
-    >>>     C = F.T @ F
-    >>>     dev = lambda C: C - jnp.trace(C) / 3 * jnp.eye(3)
-    >>>     S = mu * dev(jnp.linalg.det(C)**(-1/3) * C) @ jnp.linalg.inv(C)
-    >>>     return S
+    ... def neo_hooke_total_lagrange(F, mu=1):
+    ...     C = F.T @ F
+    ...     dev = lambda C: C - jnp.trace(C) / 3 * jnp.eye(3)
+    ...     S = mu * dev(jnp.linalg.det(C)**(-1/3) * C) @ jnp.linalg.inv(C)
+    ...     return S
     >>>
     >>> umat = mat.Material(neo_hooke_total_lagrange, mu=1)
 

@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 
 class Plugin:
@@ -58,6 +42,11 @@ class Plugin:
     ..  note::
 
         All methods are optional.
+
+    A plugin may also be a callable ``plugin(context, state)``, e.g. a function, which
+    is only called after each completed substep (in the hook ``after_substep``). It
+    replaces the ``callback`` of a :class:`~felupe.Job` (removed in 12.0.0), see the
+    notes of :class:`~felupe.Job`.
 
     See Also
     --------

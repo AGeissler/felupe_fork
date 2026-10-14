@@ -1,27 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
-
-import inspect
+from types import SimpleNamespace
 
 import numpy as np
 
 from ..math import (
-    cdya_ik,
     cdya_il,
     ddot,
     det,
@@ -75,8 +58,9 @@ class NearlyIncompressible(ConstitutiveMaterial):
     bulk : float
         The bulk modulus :math:`K` for the volumetric part of the strain energy
         function.
-    parallel : bool, optional
-        A flag to invoke parallel (threaded) math operations (default is False).
+    parallel : bool or None, optional
+        A flag to evaluate the gradient and the hessian in chunks of cells by a pool of
+        threads. If None, the flag is taken from the material (default is None).
     dUdJ : callable, optional
         A function which evaluates the derivative of the volumetric part of the strain
         energy function :math:`\bar{U}'` w.r.t. the volume ratio :math:`\bar{J}`.
@@ -111,18 +95,22 @@ class NearlyIncompressible(ConstitutiveMaterial):
         self,
         material,
         bulk,
-        parallel=False,
+        parallel=None,
         dUdJ=lambda J, bulk: bulk * (J - 1),
         d2UdJdJ=lambda J, bulk: bulk,
     ):
         self.material = self.fun = material
+
+        if parallel is None:
+            parallel = getattr(material, "parallel", False)
+
         self.parallel = parallel
         self.bulk = bulk
         self.dUdJ = dUdJ
         self.d2UdJdJ = d2UdJdJ
         self.x = [material.x[0], np.ones(1), np.ones(1), material.x[-1]]
 
-    def gradient(self, x, out=None):
+    def _gradient(self, x):
         r"""Return a list with the gradient of the strain energy density function
         w.r.t. the fields displacements, pressure and volume ratio.
 
@@ -133,8 +121,6 @@ class NearlyIncompressible(ConstitutiveMaterial):
             :math:`\boldsymbol{F}` as first, the pressure :math:`p` as
             second and the volume ratio :math:`\bar{J}` as third list item. Initial
             state variables are stored in the last (fourth) list item.
-        out : ndarray or None, optional
-            A location into which the result is stored (default is None).
 
         Returns
         -------
@@ -158,18 +144,14 @@ class NearlyIncompressible(ConstitutiveMaterial):
                 \int_V \left( \bar{U}' - p \right)\ \delta \bar{J}\ dV
 
         """
-        kwargs = {}
-        if "out" in inspect.signature(self.material.gradient).parameters:
-            kwargs["out"] = out
-
         [F, p, J], statevars = x[:3], x[-1]
-        dWdF, statevars_new = self.material.gradient([F, statevars], **kwargs)
+        dWdF, statevars_new = self.material.gradient([F, statevars])
         dWdF += p * transpose(inv(F, determinant=1.0))
         dWdp = det(F) - J
         dWdJ = self.dUdJ(J, self.bulk) - p
         return [dWdF, dWdp, dWdJ, statevars_new]
 
-    def hessian(self, x, out=None):
+    def _hessian(self, x):
         r"""Return a list with the hessian of the strain energy density function
         w.r.t. the fields displacements, pressure and volume ratio.
 
@@ -180,8 +162,6 @@ class NearlyIncompressible(ConstitutiveMaterial):
             :math:`\boldsymbol{F}` as first, the pressure :math:`p` as
             second and the volume ratio :math:`\bar{J}` as third list item. Initial
             state variables are stored in the last (fourth) list item.
-        out : ndarray or None, optional
-            A location into which the result is stored (default is None).
 
         Returns
         -------
@@ -217,14 +197,10 @@ class NearlyIncompressible(ConstitutiveMaterial):
                 \delta \bar{J}\ \bar{U}''\ \Delta \bar{J}\ dV
 
         """
-        kwargs = {}
-        if "out" in inspect.signature(self.material.hessian).parameters:
-            kwargs["out"] = out
-
         [F, p, J], statevars = x[:3], x[-1]
         detF = det(F)
         iFT = transpose(inv(F, determinant=detF))
-        d2WdFdF = self.material.hessian([F, statevars], **kwargs)[0]
+        d2WdFdF = self.material.hessian([F, statevars])[0]
         d2WdFdF += p * detF * (dya(iFT, iFT) - cdya_il(iFT, iFT))
         d2WdFdp = detF * iFT
         d2WdFdJ = None  # np.zeros_like(F)
@@ -379,24 +355,25 @@ class ThreeFieldVariation(ConstitutiveMaterial):
         A hyperelastic material definition for the strain energy density function with
         methods for the ``gradient`` and the ``hessian`` w.r.t the deformation gradient
         tensor.
-    parallel : bool, optional
-        A flag to invoke parallel (threaded) math operations (default is False).
+    parallel : bool or None, optional
+        A flag to evaluate the gradient and the hessian in chunks of cells by a pool of
+        threads. If None, the flag is taken from the material (default is None).
 
     """
 
-    def __init__(self, material, parallel=False):
+    def __init__(self, material, parallel=None):
         self.material = self.fun = material
-
-        self._fun_P = self.material.gradient
-        self._fun_A = self.material.hessian
 
         # initial variables for calling
         # ``self.gradient(self.x)`` and ``self.hessian(self.x)``
         self.x = [material.x[0], np.ones(1), np.ones(1), material.x[-1]]
 
+        if parallel is None:
+            parallel = getattr(material, "parallel", False)
+
         self.parallel = parallel
 
-    def _gradient_u(self, F, p, J):
+    def _gradient_u(self, k, p, J):
         """Variation of total potential w.r.t displacements
         (1st Piola Kirchhoff stress).
 
@@ -406,8 +383,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -420,9 +397,9 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         """
 
-        return self._Pbb - self._PbbF / 3 * self._iFT + p * self._detF * self._iFT
+        return k.Pbb - k.PbbF / 3 * k.iFT + p * k.detF * k.iFT
 
-    def _gradient_p(self, F, p, J):
+    def _gradient_p(self, k, p, J):
         """Variation of total potential energy w.r.t pressure.
 
         ..  code-block::
@@ -431,8 +408,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -445,9 +422,9 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         """
 
-        return self._detF - J
+        return k.detF - J
 
-    def _gradient_J(self, F, p, J):
+    def _gradient_J(self, k, p, J):
         """Variation of total potential energy w.r.t volume ratio.
 
         ..  code-block::
@@ -456,8 +433,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -470,9 +447,9 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         """
 
-        return self._PbbF / (3 * J) - p
+        return k.PbbF / (3 * J) - p
 
-    def gradient(self, x):
+    def _gradient(self, x):
         r"""Return a list of variations of the total potential energy w.r.t. the fields
         displacements, pressure and volume ratio.
 
@@ -490,25 +467,24 @@ class ThreeFieldVariation(ConstitutiveMaterial):
             :math:`p` and :math:`\bar{J}`.
 
         """
-        kwargs = {}
-
         [F, p, J], statevars = x[:3], x[-1]
+        k = SimpleNamespace()
 
-        self._detF = det(F)
-        self._iFT = transpose(inv(F))
-        self._Fb = (J / self._detF) ** (1 / 3) * F
-        self._Pb, statevars_new = self._fun_P([self._Fb, statevars])
-        self._Pbb = (J / self._detF) ** (1 / 3) * self._Pb
-        self._PbbF = ddot(self._Pbb, F, mode=(2, 2), parallel=self.parallel)
+        k.detF = det(F)
+        k.iFT = transpose(inv(F))
+        k.Fb = (J / k.detF) ** (1 / 3) * F
+        k.Pb, statevars_new = self.material.gradient([k.Fb, statevars])
+        k.Pbb = (J / k.detF) ** (1 / 3) * k.Pb
+        k.PbbF = ddot(k.Pbb, F, mode=(2, 2))
 
         return [
-            self._gradient_u(F, p, J),
-            self._gradient_p(F, p, J),
-            self._gradient_J(F, p, J),
+            self._gradient_u(k, p, J),
+            self._gradient_p(k, p, J),
+            self._gradient_J(k, p, J),
             statevars_new,
         ]
 
-    def hessian(self, x):
+    def _hessian(self, x):
         r"""List of linearized variations of total potential energy w.r.t
         displacements, pressure and volume ratio (these expressions are
         symmetric; ``A_up = A_pu`` if derived from a total potential energy
@@ -544,34 +520,31 @@ class ThreeFieldVariation(ConstitutiveMaterial):
         """
 
         [F, p, J], statevars = x[:3], x[-1]
+        k = SimpleNamespace()
 
-        self._detF = det(F)
-        self._iFT = transpose(inv(F))
-        self._Fb = (J / self._detF) ** (1 / 3) * F
-        self._Pbb = (J / self._detF) ** (1 / 3) * self._fun_P([self._Fb, statevars])[0]
+        k.detF = det(F)
+        k.iFT = transpose(inv(F))
+        k.Fb = (J / k.detF) ** (1 / 3) * F
+        k.Pbb = (J / k.detF) ** (1 / 3) * self.material.gradient([k.Fb, statevars])[0]
 
-        self._eye = identity(F)
-        self._P4 = cdya_ik(self._eye, self._eye, parallel=self.parallel) - 1 / 3 * dya(
-            F, self._iFT, parallel=self.parallel
-        )
-        self._A4b = self._fun_A([self._Fb, statevars])[0]
-        self._A4bb = (J / self._detF) ** (2 / 3) * self._A4b
+        k.A4b = self.material.hessian([k.Fb, statevars])[0]
+        k.A4bb = (J / k.detF) ** (2 / 3) * k.A4b
 
-        self._PbbF = ddot(self._Pbb, F, mode=(2, 2), parallel=self.parallel)
-        self._FA4bb = ddot(F, self._A4bb, mode=(2, 4), parallel=self.parallel)
-        self._A4bbF = ddot(self._A4bb, F, mode=(4, 2), parallel=self.parallel)
-        self._FA4bbF = ddot(F, self._A4bbF, mode=(2, 2), parallel=self.parallel)
+        k.PbbF = ddot(k.Pbb, F, mode=(2, 2))
+        k.FA4bb = ddot(F, k.A4bb, mode=(2, 4))
+        k.A4bbF = ddot(k.A4bb, F, mode=(4, 2))
+        k.FA4bbF = ddot(F, k.A4bbF, mode=(2, 2))
 
         return [
-            self._hessian_uu(F, p, J),
-            self._hessian_up(F, p, J),
-            self._hessian_uJ(F, p, J),
-            self._hessian_pp(F, p, J),
-            self._hessian_pJ(F, p, J),
-            self._hessian_JJ(F, p, J),
+            self._hessian_uu(k, p, J),
+            self._hessian_up(k, p, J),
+            self._hessian_uJ(k, p, J),
+            self._hessian_pp(k, p, J),
+            self._hessian_pJ(k, p, J),
+            self._hessian_JJ(k, p, J),
         ]
 
-    def _hessian_uu(self, F, p=None, J=None):
+    def _hessian_uu(self, k, p=None, J=None):
         """Linearization w.r.t. displacements of variation of
         total potential energy w.r.t displacements.
 
@@ -581,8 +554,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -594,27 +567,23 @@ class ThreeFieldVariation(ConstitutiveMaterial):
             u,u - part of hessian
         """
 
-        PbbA4bbF = self._Pbb + self._A4bbF
-        PbbFA4bb = self._Pbb + self._FA4bb
+        PbbA4bbF = k.Pbb + k.A4bbF
+        PbbFA4bb = k.Pbb + k.FA4bb
 
-        pJ9 = p * self._detF + self._PbbF / 9
-        pJ3 = p * self._detF - self._PbbF / 3
+        pJ9 = p * k.detF + k.PbbF / 9
+        pJ3 = p * k.detF - k.PbbF / 3
 
         A4 = (
-            self._A4bb
-            + self._FA4bbF * dya(self._iFT, self._iFT, parallel=self.parallel) / 9
-            - (
-                dya(PbbA4bbF, self._iFT, parallel=self.parallel)
-                + dya(self._iFT, PbbFA4bb, parallel=self.parallel)
-            )
-            / 3
-            + pJ9 * dya(self._iFT, self._iFT, parallel=self.parallel)
-            - pJ3 * cdya_il(self._iFT, self._iFT, parallel=self.parallel)
+            k.A4bb
+            + k.FA4bbF * dya(k.iFT, k.iFT) / 9
+            - (dya(PbbA4bbF, k.iFT) + dya(k.iFT, PbbFA4bb)) / 3
+            + pJ9 * dya(k.iFT, k.iFT)
+            - pJ3 * cdya_il(k.iFT, k.iFT)
         )
 
         return A4
 
-    def _hessian_pp(self, F, p, J):
+    def _hessian_pp(self, k, p, J):
         """Linearization w.r.t. pressure of variation of
         total potential energy w.r.t pressure.
 
@@ -624,8 +593,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -638,7 +607,7 @@ class ThreeFieldVariation(ConstitutiveMaterial):
         """
         return None  # np.zeros_like(p)
 
-    def _hessian_JJ(self, F, p, J):
+    def _hessian_JJ(self, k, p, J):
         """Linearization w.r.t. volume ratio of variation of
         total potential energy w.r.t volume ratio.
 
@@ -648,8 +617,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -661,9 +630,9 @@ class ThreeFieldVariation(ConstitutiveMaterial):
             J,J - part of hessian
         """
 
-        return (self._FA4bbF - 2 * self._PbbF) / (9 * J**2)
+        return (k.FA4bbF - 2 * k.PbbF) / (9 * J**2)
 
-    def _hessian_up(self, F, p, J):
+    def _hessian_up(self, k, p, J):
         """Linearization w.r.t. pressure of variation of
         total potential energy w.r.t displacements.
 
@@ -673,8 +642,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -686,9 +655,9 @@ class ThreeFieldVariation(ConstitutiveMaterial):
             u,p - part of hessian
         """
 
-        return self._detF * self._iFT
+        return k.detF * k.iFT
 
-    def _hessian_uJ(self, F, p, J):
+    def _hessian_uJ(self, k, p, J):
         """Linearization w.r.t. volume ratio of variation of
         total potential energy w.r.t displacements.
 
@@ -698,8 +667,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -711,10 +680,10 @@ class ThreeFieldVariation(ConstitutiveMaterial):
             u,J - part of hessian
         """
 
-        Ps = self._gradient_u(F, 0 * p, J)
-        return (-self._FA4bbF / 3 * self._iFT + Ps + self._FA4bb) / (3 * J)
+        Ps = self._gradient_u(k, 0 * p, J)
+        return (-k.FA4bbF / 3 * k.iFT + Ps + k.FA4bb) / (3 * J)
 
-    def _hessian_pJ(self, F, p, J):
+    def _hessian_pJ(self, k, p, J):
         """Linearization w.r.t. volume ratio of variation of
         total potential energy w.r.t pressure.
 
@@ -724,8 +693,8 @@ class ThreeFieldVariation(ConstitutiveMaterial):
 
         Arguments
         ---------
-        F : ndarray
-            Deformation gradient
+        k : SimpleNamespace
+            Intermediate results of a chunk of cells, e.g. ``k.detF``.
         p : ndarray
             Hydrostatic pressure
         J : ndarray
@@ -762,8 +731,9 @@ class ThirdMediumContactMixed(ConstitutiveMaterial):
     p_r : float
         The penalty parameter :math:`p_r` which enforces the constraint
         :math:`\boldsymbol{\theta} = \boldsymbol{H}`.
-    parallel : bool, optional
-        A flag to invoke parallel (threaded) math operations (default is False).
+    parallel : bool or None, optional
+        A flag to evaluate the gradient and the hessian in chunks of cells by a pool of
+        threads. If None, the flag is taken from the material (default is None).
 
     Notes
     -----
@@ -820,9 +790,13 @@ class ThirdMediumContactMixed(ConstitutiveMaterial):
         gamma,
         alpha_r,
         p_r,
-        parallel=False,
+        parallel=None,
     ):
         self.material = self.fun = material
+
+        if parallel is None:
+            parallel = getattr(material, "parallel", False)
+
         self.parallel = parallel
         self.gamma = gamma
         self.alpha_r = alpha_r
@@ -832,13 +806,9 @@ class ThirdMediumContactMixed(ConstitutiveMaterial):
         # for cartesian 3d fields, x[2].shape is (9, 3)
         self.x = [material.x[0], np.ones(9), np.ones((9, 3)), material.x[-1]]
 
-    def gradient(self, x, out=None):
-        kwargs = {}
-        if "out" in inspect.signature(self.material.gradient).parameters:
-            kwargs["out"] = out
-
+    def _gradient(self, x):
         [F, θ, grad_θ], statevars = x[:3], x[-1]
-        dWdF, statevars_new = self.material.gradient([F, statevars], **kwargs)
+        dWdF, statevars_new = self.material.gradient([F, statevars])
         dWdF *= self.gamma
 
         # ψ_p = p_r * (θ - dudX : θ - dudX) / 2
@@ -852,12 +822,9 @@ class ThirdMediumContactMixed(ConstitutiveMaterial):
 
         return [dWdF, dWdθ, dWdgradθ, statevars_new]
 
-    def hessian(self, x, out=None):
-        kwargs = {}
-        if "out" in inspect.signature(self.material.hessian).parameters:
-            kwargs["out"] = out
-
-        [F, θ, grad_θ], statevars = x[:3], x[-1]
+    def _hessian(self, x):
+        # the hessian doesn't depend on the values of θ
+        F, grad_θ, statevars = x[0], x[2], x[-1]
 
         # for plane-strain or axisymmetric first-fields, grad_θ.shape is (9, 2)
         # for cartesian 3d fields, grad_θ.shape is (9, 3)
@@ -870,7 +837,7 @@ class ThirdMediumContactMixed(ConstitutiveMaterial):
         # ψ_p = p_r * (θ - dudX : θ - dudX) / 2
         # ψ_g = α_r * (∇θ : ∇θ) / 2
 
-        d2WdFdF = self.material.hessian([F, statevars], **kwargs)[0]
+        d2WdFdF = self.material.hessian([F, statevars])[0]
         d2WdFdF *= self.gamma
         d2WdFdF += self.p_r * reshape(identity_9_9, (3, 3, 3, 3))
 

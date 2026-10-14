@@ -12,7 +12,6 @@
 #
 import datetime
 import os
-import sys
 
 import pyvista
 from pyvista.plotting.utilities.sphinx_gallery import DynamicScraper
@@ -110,6 +109,14 @@ plot_formats = ["png"]
 
 # pyvista plot directive
 pyvista_plot_include_source = True
+
+# The builds of pull requests on Read the Docs don't run the examples of the gallery
+# and of the pyvista plot directives, i.e. their pages show the code without the
+# figures. The examples of the docstrings are tested by pytest. The builds of the
+# versions, e.g. latest and stable, run all examples.
+if os.environ.get("READTHEDOCS_VERSION_TYPE") == "external":
+    plot_gallery = "False"
+    pyvista_plot_skip = True
 
 # -- Options for HTML output -------------------------------------------------
 

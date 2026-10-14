@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 HOOKS = (
     "before_job",
@@ -72,9 +56,9 @@ class Context:
     check : callable or None, optional
         A callable ``xnorm, fnorm, success = check(dx, x, f)`` which checks the
         convergence of the Newton-Raphson method for given unknowns ``x`` with the
-        values of the objective function ``f`` (default is None). In contrast to the
-        ``check``-argument of :func:`~felupe.newtonraphson`, the state variables of
-        the items are not updated. Only available in the hooks of
+        values of the objective function ``f`` (default is None). The state variables
+        of the items are not updated, this is done by :func:`~felupe.newtonraphson`
+        after a converged iteration. Only available in the hooks of
         :func:`~felupe.newtonraphson`.
     x0 : felupe.FieldContainer or None, optional
         The field container with the unknowns of a step, which is the starting point
@@ -133,7 +117,9 @@ class EventDispatcher:
     Parameters
     ----------
     plugins : list or None, optional
-        The list of plugins.
+        The list of plugins. A callable plugin, e.g. a function, is called in the hook
+        ``after_substep``. Otherwise, the methods of a plugin with the names of the
+        hooks are called.
 
     """
 
@@ -152,7 +138,6 @@ class EventDispatcher:
         # check if methods are available for the hooks in the plugins
         # add them to the dispatcher if they are available
         for plugin in self.plugins:
-
             # simple callable plugin
             if callable(plugin):
                 dispatcher["after_substep"].append(plugin)

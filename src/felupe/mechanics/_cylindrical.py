@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
@@ -149,8 +133,8 @@ class CylindricalConstraint(PointConstraint):
         >>> import numpy as np
         >>> import felupe as fem
         >>>
-        >>> rectangle = fem.Rectangle(a=(0, 1), b=(3, 2), n=(10, 4))
-        >>> mesh = rectangle.revolve(n=25, phi=360, axis=0)
+        >>> rectangle = fem.Rectangle(a=(0, 1), b=(3, 2), n=(6, 3))
+        >>> mesh = rectangle.revolve(n=17, phi=360, axis=0)
         >>> region = fem.RegionHexahedron(mesh)
         >>> displacement = fem.Field(region, dim=3)
         >>> field = fem.FieldContainer([displacement])
@@ -171,7 +155,7 @@ class CylindricalConstraint(PointConstraint):
         >>> twist = fem.CylindricalConstraint(
         ...     field, points=np.isclose(mesh.x, 3), axis=(1, 0, 0)
         ... )
-        >>> angles = np.linspace(0, np.pi / 2, 10)
+        >>> angles = np.linspace(0, np.pi / 2, 4)
         >>> table = [twist.radius.reshape(-1, 1) * [0, angle, 0] for angle in angles]
         >>>
         >>> boundaries = {"fixed": fem.Boundary(displacement, fx=0)}

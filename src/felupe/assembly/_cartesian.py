@@ -1,34 +1,12 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
-
-import os
-from concurrent.futures import ThreadPoolExecutor
-from functools import cached_property
+from functools import cached_property, partial
 
 import numpy as np
-
-try:
-    from einsumt import einsumt
-except ModuleNotFoundError:
-    from numpy import einsum as einsumt
-
 from scipy.sparse import csr_matrix as sparsematrix
 
+from ..math._chunks import CHUNKSIZE_BYTES
+from ..math._einsum import einsum_chunks
 from ._sparsity import sparsity_pattern
 
 # Contraction path for the bilinear form of the gradients of the test and the trial
@@ -40,52 +18,6 @@ from ._sparsity import sparsity_pattern
 # number of operations. As the intermediate arrays are evaluated in chunks of cells,
 # their size is limited anyway.
 PATH_GRAD_GRAD = ["einsum_path", (0, 3), (0, 1), (0, 1)]
-
-# Approximate number of bytes of all arrays which are processed per chunk of cells.
-# The arrays of a chunk should fit into the CPU caches, about the size of the L2 cache
-# of one core. Smaller chunks increase the overhead of the einsum-calls per chunk.
-CHUNKSIZE_BYTES = 2**21
-
-
-def cpu_count():
-    """Return the number of CPUs which may be used by the current process. Unlike
-    :func:`os.cpu_count`, this respects the CPU affinity of the process, e.g. the CPUs
-    of a job on a shared HPC-node. For Python 3.13+, the number of CPUs may be
-    overridden by the environment variable ``PYTHON_CPU_COUNT``."""
-
-    if hasattr(os, "process_cpu_count"):  # Python 3.13+
-        return os.process_cpu_count() or 1
-
-    if hasattr(os, "sched_getaffinity"):  # Linux
-        return len(os.sched_getaffinity(0))
-
-    return os.cpu_count() or 1
-
-
-def einsum_chunks(subscripts, *operands, out, chunksize, optimize, parallel=False):
-    """Evaluate :func:`numpy.einsum` in chunks of the last axis (the cells) and write
-    the results into the given output array. Operands with a broadcasted last axis
-    (length one) are not sliced. If ``parallel`` is True, the chunks are evaluated by
-    a pool of threads (one per usable CPU, at most one per chunk)."""
-
-    ncells = out.shape[-1]
-
-    def evaluate(start):
-        cells = slice(start, start + chunksize)
-        chunk = [x[..., cells] if x.shape[-1] == ncells else x for x in operands]
-        np.einsum(subscripts, *chunk, optimize=optimize, out=out[..., cells])
-
-    starts = range(0, ncells, chunksize)
-    workers = min(cpu_count(), len(starts)) if parallel else 1
-
-    if workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            list(pool.map(evaluate, starts))
-    else:
-        for start in starts:
-            evaluate(start)
-
-    return out
 
 
 class IntegralFormCartesian:
@@ -265,10 +197,8 @@ class IntegralFormCartesian:
                     trim[nv : nv + nu] = [slice(2)] * nu
                 fun = fun[tuple(trim)]
 
-        if parallel:
-            einsum = einsumt
-        else:
-            einsum = np.einsum
+        # chunks of cells, one per thread (parallel) or a single chunk (serial)
+        einsum = partial(einsum_chunks, parallel=parallel)
 
         if not grad_v:
             vb = v.region.h
@@ -339,6 +269,8 @@ class IntegralFormCartesian:
                 b, L = ub.shape[:2]
                 i, k = fun.shape[0], fun.shape[2]
 
+                # the sparse assembly of the stiffness matrix is faster for values in
+                # C-order than for the (faster to evaluate) memory layout of NumPy
                 if out is None:
                     shape = (a, i, b, k, ncells)
                     out = np.empty(shape, dtype=np.result_type(*operands))

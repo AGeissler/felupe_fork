@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from ._basis import Basis
 from ._mixed import BilinearFormExpression, LinearFormExpression
@@ -112,7 +96,7 @@ class FormExpression:
 
             # check if new form type matches initial form type (update-stage)
             if form_type is not None:
-                if form_type == type(form):
+                if form_type is type(form):
                     self.form = form
                 else:
                     raise TypeError("Wrong type of fields.")

@@ -1,29 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-This file is part of felupe.
+import pathlib
+import tempfile
 
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
 import matplotlib
 
 matplotlib.use("Agg")
@@ -135,6 +114,73 @@ def test_nh_out():
 
                 assert np.allclose(Px, P)
                 assert np.allclose(Ax, A)
+
+
+def test_nh_chunks(monkeypatch):
+    "The Neo-Hookean materials are evaluated in chunks of cells."
+
+    import felupe.math._threads as threads
+
+    monkeypatch.setattr(threads, "cpu_count", lambda: 2)
+
+    mesh = fem.Cube(n=4)  # 27 cells
+    field = fem.FieldContainer([fem.Field(fem.RegionHexahedron(mesh), dim=3)])
+    field[0].values[:] = np.random.default_rng(55601).random(mesh.points.shape) / 20
+    F = field.extract()[0]
+    x = [F, np.zeros((0, *F.shape[-2:]))]
+
+    for Material, kwargs in [
+        (fem.NeoHooke, dict(mu=None, bulk=1.0)),
+        (fem.NeoHooke, dict(mu=1.0, bulk=None)),
+        (fem.NeoHooke, dict(mu=1.0, bulk=2.0)),
+        (fem.NeoHookeCompressible, dict(mu=1.0, lmbda=None)),
+        (fem.NeoHookeCompressible, dict(mu=1.0, lmbda=2.0)),
+    ]:
+        whole = Material(**kwargs)
+        whole.chunksize = None
+        P = whole.gradient(x)[0]
+        A = whole.hessian(x)[0]
+
+        for parallel in [False, True]:
+            umat = Material(**kwargs, parallel=parallel)
+            umat.chunksize = 2 * F.shape[-2]  # chunks of two cells
+
+            assert np.allclose(umat.gradient(x)[0], P)
+            assert np.allclose(umat.hessian(x)[0], A)
+
+
+def test_linear_tensor_notation_chunks(monkeypatch):
+    "The stress of the linear-elastic material is evaluated in chunks of cells."
+
+    import felupe.math._threads as threads
+
+    monkeypatch.setattr(threads, "cpu_count", lambda: 2)
+
+    mesh = fem.Cube(n=4)  # 27 cells
+    field = fem.FieldContainer([fem.Field(fem.RegionHexahedron(mesh), dim=3)])
+    field[0].values[:] = np.random.default_rng(8).random(mesh.points.shape) / 20
+    F = field.extract()[0]
+    x = [F, np.zeros((0, *F.shape[-2:]))]
+
+    whole = fem.constitution.LinearElasticTensorNotation(E=1.0, nu=0.3)
+    whole.chunksize = None
+    P = whole.gradient(x)[0]
+
+    for parallel in [False, True]:
+        umat = fem.constitution.LinearElasticTensorNotation(
+            E=1.0, nu=0.3, parallel=parallel
+        )
+        umat.chunksize = 2 * F.shape[-2]  # chunks of two cells
+
+        assert np.allclose(umat.gradient(x)[0], P)
+        assert np.allclose(umat.stress(x)[0], P)
+
+        # the elasticity tensor is constant
+        A = umat.hessian(x)[0]
+        assert A.shape == (3, 3, 3, 3, 1, 1)
+        assert np.allclose(
+            fem.math.ddot(A, F - np.eye(3).reshape(3, 3, 1, 1), mode=(4, 2)), P
+        )
 
 
 def test_linear():
@@ -368,7 +414,7 @@ def test_umat_hyperelastic_statevars(close_figs=True):
             plt.close(ax.get_figure())
 
 
-def test_umat_hyperelastic(close_figs=True):
+def test_umat_hyperelastic(tmp_path, close_figs=True):
     r, x = pre(sym=False, add_identity=True)
     F = x[0]
 
@@ -475,7 +521,9 @@ def test_umat_hyperelastic(close_figs=True):
         if close_figs:
             plt.close(ax.get_figure())
 
-        ax = umat.screenshot(incompressible=incompressible)
+        ax = umat.screenshot(
+            filename=tmp_path / "umat.png", incompressible=incompressible
+        )
 
         if close_figs:
             plt.close(ax.get_figure())
@@ -501,7 +549,7 @@ def test_umat_hyperelastic(close_figs=True):
             plt.close(ax.get_figure())
 
 
-def test_umat_lagrange(close_figs=True):
+def test_umat_lagrange(tmp_path, close_figs=True):
     r, x = pre(sym=False, add_identity=True)
     F = x[0]
 
@@ -523,7 +571,9 @@ def test_umat_lagrange(close_figs=True):
         if close_figs:
             plt.close(ax.get_figure())
 
-        ax = umat.screenshot(incompressible=incompressible)
+        ax = umat.screenshot(
+            filename=tmp_path / "umat.png", incompressible=incompressible
+        )
 
         if close_figs:
             plt.close(ax.get_figure())
@@ -644,7 +694,6 @@ def test_umat_strain():
     statevars = np.zeros((18 + 0, *F.shape[-2:]))
 
     for framework in ["small-strain", "total-lagrange", "co-rotational"]:
-
         umat = fem.MaterialStrain(
             material=fem.constitution.linear_elastic,
             λ=1,
@@ -656,7 +705,6 @@ def test_umat_strain():
         dsde = umat.hessian([F, statevars])
 
     with pytest.raises(NotImplementedError):
-
         umat = fem.MaterialStrain(
             material=fem.constitution.linear_elastic,
             λ=1,
@@ -716,6 +764,35 @@ def test_elpliso():
 
     s, statevars_new = umat.gradient([F, statevars])
     dsde = umat.hessian([F, statevars])
+
+
+def test_umat_strain_optimize():
+    "The parameters of a strain-based material are optimized, but not `tangent`."
+
+    # uniaxial and biaxial tension are required to identify both lamé parameters
+    stretches = np.linspace(1, 1.01, 6)
+    umat = fem.MaterialStrain(material=fem.linear_elastic, λ=2.0, μ=1.0)
+    view = umat.view(incompressible=False, ux=stretches, bx=stretches, ps=None)
+    uniaxial, biaxial = view.evaluate()
+
+    # a given flag `tangent` is not a parameter of the material
+    initial = fem.MaterialStrain(
+        material=fem.linear_elastic, λ=1.0, μ=0.5, tangent=True
+    )
+    assert list(initial.kwargs.keys()) == ["λ", "μ"]
+
+    # also after an evaluation of the material
+    initial.gradient([np.eye(3).reshape(3, 3, 1, 1), np.zeros((18, 1, 1))])
+    umat_new, res = initial.optimize(
+        ux=[stretches, uniaxial[1]],
+        bx=[stretches, biaxial[1]],
+        incompressible=False,
+    )
+
+    assert res.success
+    assert list(umat_new.kwargs.keys()) == ["λ", "μ"]
+    assert np.isclose(umat_new.kwargs["λ"], 2.0)
+    assert np.isclose(umat_new.kwargs["μ"], 1.0)
 
 
 def test_composite(close_figs=True):
@@ -783,11 +860,12 @@ def test_optimize(close_figs=True):
         if close_figs:
             plt.close(ax.get_figure())
 
+    # models with scalar and with array-valued material parameters (ogden), each fit
+    # takes less than a second
     for model in [
         fem.neo_hooke,
         fem.ogden,
         fem.third_order_deformation,
-        fem.alexander,
     ]:
         umat = fem.Hyperelastic(model)
         umat_new, res = umat.optimize(ux=[stretches, stresses], incompressible=True)
@@ -801,7 +879,7 @@ def test_optimize(close_figs=True):
 
     for model in [
         fem.neo_hooke,
-        fem.miehe_goektepe_lulei,
+        fem.ogden,
     ]:
         umat = fem.Hyperelastic(model)
         umat_new, res = umat.optimize(
@@ -946,8 +1024,35 @@ def test_plot_negative_stretches(close_figs=True):
                 plt.close(ax.get_figure())
 
 
-if __name__ == "__main__":
+def test_plot_title_kwargs(close_figs=True):
+    "The parameters in the title of the plot may be None, 0-d arrays or strings."
 
+    umats = [
+        # a strain-based material
+        fem.MaterialStrain(material=fem.linear_elastic, λ=2.0, μ=1.0),
+        # the elastic modulus is a 0-d array
+        fem.LinearElastic1D(E=1),
+    ]
+
+    for umat in umats:
+        ax = umat.plot()
+
+        if close_figs:
+            plt.close(ax.get_figure())
+
+    umat = fem.NeoHooke(mu=1.0, bulk=2.0)
+    umat.kwargs["name"] = "a string"
+    umat.kwargs["unset"] = None
+    ax = umat.plot()
+
+    assert '"a string"' in ax.get_title()
+    assert "unset" not in ax.get_title()
+
+    if close_figs:
+        plt.close(ax.get_figure())
+
+
+if __name__ == "__main__":
     close_figs = True
 
     test_nh()
@@ -958,18 +1063,22 @@ if __name__ == "__main__":
     test_linear_planestrain()
     test_kinematics()
     test_umat()
-    test_umat_hyperelastic(close_figs=close_figs)
+    with tempfile.TemporaryDirectory() as tmp:
+        test_umat_hyperelastic(tmp_path=pathlib.Path(tmp), close_figs=close_figs)
     test_umat_hyperelastic2()
     test_umat_hyperelastic_statevars(close_figs=close_figs)
-    test_umat_lagrange(close_figs=close_figs)
+    with tempfile.TemporaryDirectory() as tmp:
+        test_umat_lagrange(tmp_path=pathlib.Path(tmp), close_figs=close_figs)
     test_umat_viscoelastic(close_figs=close_figs)
     test_umat_viscoelastic2()
     test_umat_strain()
     test_umat_strain_plasticity()
     test_elpliso()
+    test_umat_strain_optimize()
     test_composite(close_figs=close_figs)
     test_optimize(close_figs=close_figs)
     test_lagrange()
     test_lagrange_statevars()
     test_laplace()
     test_plot_negative_stretches(close_figs=True)
+    test_plot_title_kwargs(close_figs=True)

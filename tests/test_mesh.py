@@ -1,36 +1,15 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-This file is part of felupe.
+import pathlib
+import tempfile
 
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
 import numpy as np
 import pytest
 
 import felupe as fem
 
 
-def test_meshes():
+def test_meshes(tmp_path):
     m = fem.Mesh(
         points=np.array(
             [
@@ -181,11 +160,11 @@ def test_meshes():
     m.merge_duplicate_cells()
 
     m.as_meshio(point_data={"data": m.points}, cell_data={"cell_data": [m.cells[:, 0]]})
-    m.save()
+    m.save(tmp_path / "mesh.vtk")
 
     m.cell_type = None
     with pytest.raises(Exception):
-        m.save()
+        m.save(tmp_path / "mesh.vtk")
 
     other_mesh = m.copy()
     other_mesh.update(cells=m.cells[:3])
@@ -779,7 +758,9 @@ def test_get_set_xyz():
 
 
 if __name__ == "__main__":
-    test_meshes()
+    with tempfile.TemporaryDirectory() as tmp:
+        test_meshes(tmp_path=pathlib.Path(tmp))
+
     test_mirror()
     test_triangulate()
     test_runouts()

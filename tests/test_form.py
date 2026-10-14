@@ -1,29 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
-
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 import pytest
@@ -170,6 +145,87 @@ def test_axi():
 
         K = a.assemble(parallel=parallel).toarray()
         assert K.shape == (r.mesh.ndof, r.mesh.ndof)
+
+
+def test_axi_reference():
+    """The axisymmetric integral forms of all combinations of gradients are equal to a
+    reference with the three-dimensional values and gradients of the basis functions."""
+
+    rng = np.random.default_rng(1234)
+    region = fem.RegionQuad(fem.Rectangle(a=(0, 1), b=(2, 3), n=(3, 4)))
+    u = fem.FieldAxisymmetric(region, dim=2)
+    p = fem.Field(region, dim=1)
+    w = fem.Field(region, dim=3)
+
+    dhdX = region.dhdX  # (a, J, q, c)
+    h = np.broadcast_to(region.h, dhdX[:, 0].shape)  # (a, q, c)
+    R = u.radius
+    dV = 2 * np.pi * R * region.dV
+    a, q, c = h.shape
+
+    def basis(field, grad):
+        "Basis (a, i, k, [L], q, c): the values (v_x, v_r, v_r / R) or the gradients."
+        if field.dim == 1:
+            return (dhdX if grad else h)[:, None]
+
+        axisymmetric = isinstance(field, fem.FieldAxisymmetric)
+        dim = 3 if axisymmetric else field.dim
+
+        if grad:
+            # the gradients of a field on a 2d-mesh (and the out-of-plane gradient)
+            b = np.zeros((a, field.dim, dim, 3 if axisymmetric else 2, q, c))
+            for i in range(field.dim):
+                b[:, i, i, :2] = dhdX
+            if axisymmetric:
+                b[:, 1, 2, 2] = h / R
+        else:
+            b = np.zeros((a, field.dim, dim, q, c))
+            for i in range(field.dim):
+                b[:, i, i] = h
+            if axisymmetric:
+                b[:, 1, 2] = h / R
+
+        return b
+
+    def reference(fun, v, grad_v, u=None, grad_u=None):
+        bv = basis(v, grad_v)
+        sv = "klmn"[: bv.ndim - 4]
+        if u is None:
+            return np.einsum(f"ai{sv}qc,{sv}qc,qc->aic", bv, fun, dV)
+        bu = basis(u, grad_u)
+        su = "rstu"[: bu.ndim - 4]
+        return np.einsum(f"ai{sv}qc,{sv}{su}qc,bj{su}qc,qc->aibjc", bv, fun, bu, dV)
+
+    for shape, grad_v, field, grad_u in [
+        ((3, 3), True, None, None),
+        ((3,), False, None, None),
+        ((3, 3, 3, 3), True, u, True),
+        ((3, 3, 3), False, u, True),
+        ((3, 3, 3), True, u, False),
+        ((3, 3), False, u, False),
+        ((3, 3), True, p, False),
+        ((3, 3, 3), True, w, False),
+        ((3,), False, p, False),
+        ((3, 3, 3, 2), True, w, True),
+    ]:
+        fun = rng.standard_normal((*shape, q, c))
+        form = fem.assembly.IntegralFormAxisymmetric(
+            fun, u, region.dV, field, grad_v=grad_v, grad_u=grad_u
+        )
+        values = form.integrate()
+        expected = reference(fun, u, grad_v, field, grad_u)
+
+        assert np.allclose(values, expected.reshape(values.shape))
+
+    # a symmetric function gives a symmetric matrix
+    fun = rng.standard_normal((3, 3, q, c))
+    fun = fun + np.einsum("ij...->ji...", fun)
+    form = fem.IntegralForm(
+        [fun], u.as_container(), region.dV, u.as_container(), [False], [False]
+    )
+    matrix = form.assemble().toarray()
+
+    assert np.allclose(matrix, matrix.T)
 
 
 def test_linearform():
@@ -331,18 +387,10 @@ def test_bilinearform_grad_grad_chunks():
 def test_bilinearform_grad_grad_threads(monkeypatch):
     "The chunks are evaluated by threads (one per usable CPU, at most one per chunk)."
 
-    import os
-
     import felupe.assembly._cartesian as cartesian
+    import felupe.math._threads as threads
 
     monkeypatch.setattr(cartesian, "CHUNKSIZE_BYTES", 200_000)  # 4 chunks of 27 cells
-
-    # the number of usable CPUs, also without the newer functions of os
-    assert cartesian.cpu_count() >= 1
-    monkeypatch.delattr(os, "process_cpu_count", raising=False)
-    assert cartesian.cpu_count() >= 1
-    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
-    assert cartesian.cpu_count() >= 1
 
     mesh = fem.Cube(n=4)
     region = fem.RegionHexahedron(mesh)
@@ -354,8 +402,81 @@ def test_bilinearform_grad_grad_threads(monkeypatch):
 
     # one thread (serial), less threads than chunks and more CPUs than chunks
     for cpus in [1, 2, 64]:
-        monkeypatch.setattr(cartesian, "cpu_count", lambda: cpus)
+        monkeypatch.setattr(threads, "cpu_count", lambda: cpus)
         assert np.allclose(form.integrate(parallel=True)[0], expected)
+
+
+def test_integrate_parallel(monkeypatch):
+    "All branches of the integration are equal in serial and in parallel."
+
+    import felupe.math._threads as threads
+
+    mesh = fem.Cube(n=4)
+    region = fem.RegionHexahedron(mesh)
+    u = fem.Field(region, dim=3)
+    p = fem.Field(region)
+    dV = region.dV
+
+    rng = np.random.default_rng(0)
+    q, c = dV.shape
+
+    # function shapes (without the quadrature points and cells), the test and trial
+    # fields and the gradient flags, for all branches of the linear and bilinear forms
+    cases = [
+        ((3,), u, None, False, False),
+        ((), p, None, False, False),
+        ((3, 3), u, None, True, False),
+        ((), p, p, False, False),
+        ((3,), u, p, False, False),
+        ((3, 3), u, u, False, False),
+        ((3, 3, 3, 3), u, u, False, False),
+        ((3, 3), u, p, True, False),
+        ((3, 3, 3), u, u, True, False),
+        ((3, 3), p, u, False, True),
+        ((3, 3, 3), u, u, False, True),
+        ((3, 3, 3, 3), u, u, True, True),
+    ]
+
+    for shape, v, w, grad_v, grad_u in cases:
+        # one function per quadrature point and cell or broadcasted
+        for size in [(q, c), (1, 1)]:
+            fun = rng.random((*shape, *size))
+            form = fem.assembly.IntegralFormCartesian(
+                fun=fun, v=v, dV=dV, u=w, grad_v=grad_v, grad_u=grad_u
+            )
+            expected = form.integrate(parallel=False)
+
+            # less threads than cells and more threads than cells
+            for cpus in [2, 64]:
+                monkeypatch.setattr(threads, "cpu_count", lambda: cpus)
+                assert np.allclose(form.integrate(parallel=True), expected)
+
+                out = np.zeros_like(expected)
+                values = form.integrate(parallel=True, out=out)
+                assert values is out
+                assert np.allclose(out, expected)
+
+
+def test_basis_parallel(monkeypatch):
+    "The bases are equal in serial and in parallel, also for three cells in 3d."
+
+    import felupe.math._threads as threads
+
+    # the identity matrix of the basis has the same length as the cells
+    mesh = fem.Cube(n=(4, 2, 2))
+    region = fem.RegionHexahedron(mesh, hess=True)
+    field = fem.Field(region, dim=3)
+    assert mesh.ncells == field.dim
+
+    expected = fem.assembly.expression.BasisField(field, parallel=False).basis
+
+    for cpus in [2, 3, 64]:
+        monkeypatch.setattr(threads, "cpu_count", lambda: cpus)
+        basis = fem.assembly.expression.BasisField(field, parallel=True).basis
+
+        assert np.allclose(basis, expected)
+        assert np.allclose(basis.grad, expected.grad)
+        assert np.allclose(basis.hess, expected.hess)
 
 
 def test_sparsity_pattern():
@@ -531,4 +652,5 @@ if __name__ == "__main__":
     test_single_block()
     test_bilinearform_lazy_indices()
     test_axi()
+    test_axi_reference()
     test_mixed()

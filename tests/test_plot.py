@@ -1,36 +1,15 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
+import contextlib
+import pathlib
+import tempfile
 
 import pytest
 
 import felupe as fem
 
 
-def pre(n=3):
+def pre(n=3, filename=None):
     mesh = fem.Cube(n=n)
     region = fem.RegionHexahedron(mesh)
     field = fem.FieldContainer([fem.Field(region, dim=3)])
@@ -41,12 +20,12 @@ def pre(n=3):
     step = fem.Step(
         items=[solid], ramp={boundaries["move"]: move}, boundaries=boundaries
     )
-    fem.Job(steps=[step]).evaluate(filename="result.xdmf", verbose=False)
+    fem.Job(steps=[step]).evaluate(filename=filename, verbose=False)
 
     return mesh, field, solid
 
 
-def pre_2d(n=3):
+def pre_2d(n=3, filename=None):
     mesh = fem.Rectangle(n=n)
     region = fem.RegionQuad(mesh)
     field = fem.FieldContainer([fem.FieldPlaneStrain(region, dim=2)])
@@ -57,23 +36,25 @@ def pre_2d(n=3):
     step = fem.Step(
         items=[solid], ramp={boundaries["move"]: move}, boundaries=boundaries
     )
-    fem.Job(steps=[step]).evaluate(filename="result.xdmf", verbose=False)
+    fem.Job(steps=[step]).evaluate(filename=filename, verbose=False)
 
     return mesh, field, solid
 
 
-def test_xdmf_cell_data():
+def test_xdmf_cell_data(tmp_path):
     try:
         import pyvista
 
-        pre(n=3)
+        filename = str(tmp_path / "result.xdmf")
+        with contextlib.chdir(tmp_path):  # meshio writes the h5-file to the cwd
+            pre(n=3, filename=filename)
 
         # TODO: Remove if pyvista has a release with ``XdmfReader`` included.
         major, minor = pyvista.__version__.split(".")[:2]
         if int(major) == 0 and int(minor) < 39:
             print("Xdmf-Reader not available. Requires ``pyvista >= 0.39``.")
         else:
-            view = fem.ViewXdmf("result.xdmf", time=3)
+            view = fem.ViewXdmf(filename, time=3)
             plotter = view.plot(
                 "Principal Values of Logarithmic Strain",
                 off_screen=True,
@@ -84,18 +65,20 @@ def test_xdmf_cell_data():
         pass
 
 
-def test_xdmf_point_data():
+def test_xdmf_point_data(tmp_path):
     try:
         import pyvista
 
-        pre_2d(n=3)
+        filename = str(tmp_path / "result.xdmf")
+        with contextlib.chdir(tmp_path):  # meshio writes the h5-file to the cwd
+            pre_2d(n=3, filename=filename)
 
         # TODO: Remove if pyvista has a release with ``XdmfReader`` included.
         major, minor = pyvista.__version__.split(".")[:2]
         if int(major) == 0 and int(minor) < 39:
             print("Xdmf-Reader not available. Requires ``pyvista >= 0.39``.")
         else:
-            view = fem.ViewXdmf("result.xdmf", time=3)
+            view = fem.ViewXdmf(filename, time=3)
             plotter = view.plot(
                 "Displacement",
                 off_screen=True,
@@ -190,8 +173,10 @@ def test_logo_path():
 
 
 if __name__ == "__main__":
-    test_xdmf_cell_data()
-    test_xdmf_point_data()
+    for test in [test_xdmf_cell_data, test_xdmf_point_data]:
+        with tempfile.TemporaryDirectory() as tmp:
+            test(tmp_path=pathlib.Path(tmp))
+
     test_cell_data()
     test_point_data()
     test_mesh()

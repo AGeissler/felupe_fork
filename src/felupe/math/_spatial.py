@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
@@ -182,7 +166,7 @@ def revolve_points(points, n=11, phi=180, axis=0, expand_dim=True):
        >>> import felupe as fem
        >>>
        >>> points = fem.Rectangle(a=(0, 4), b=(3, 5), n=(10, 4)).points
-       >>> points_new = fem.math.revolve_points(mesh.points, n=11, phi=180, axis=0)
+       >>> points_new = fem.math.revolve_points(points, n=11, phi=180, axis=0)
 
     See Also
     --------

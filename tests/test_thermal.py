@@ -1,27 +1,15 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of felupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+import contextlib
+import pathlib
+import tempfile
 
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
 import pytest
 
 import felupe as fem
 
 
-def test_thermal():
+def test_thermal(tmp_path):
     mesh = fem.Rectangle(n=3)
     region = fem.RegionQuad(mesh)
     temperature = fem.Field(region, dim=1, values=20.0)
@@ -108,15 +96,19 @@ def test_thermal():
         ramp=ramp,
         boundaries=boundaries,
     )
-    job = fem.Job(steps=[step]).evaluate(
-        filename="result.xdmf",  # result file for Paraview
-        point_data={"Temperature": lambda field, substep: temperature.values},
-        point_data_default=False,
-        cell_data_default=False,
-    )
+    # meshio writes the h5-file relative to the working directory
+    with contextlib.chdir(tmp_path):
+        job = fem.Job(steps=[step]).evaluate(
+            filename="result.xdmf",  # result file for Paraview
+            point_data={"Temperature": lambda field, substep: temperature.values},
+            point_data_default=False,
+            cell_data_default=False,
+        )
+
+    assert (tmp_path / "result.xdmf").exists()
 
 
-def test_thermal_axi():
+def test_thermal_axi(tmp_path):
     mesh = fem.Rectangle(n=3)
     region = fem.RegionQuad(mesh)
     temperature = fem.FieldAxisymmetric(region, dim=1)
@@ -213,12 +205,16 @@ def test_thermal_axi():
     step = fem.Step(
         items=[time, solid, heat_transfer, heat_flux], ramp=ramp, boundaries=boundaries
     )
-    job = fem.Job(steps=[step]).evaluate(
-        filename="result.xdmf",  # result file for Paraview
-        point_data={"Temperature": lambda field, substep: temperature.values},
-        point_data_default=False,
-        cell_data_default=False,
-    )
+    # meshio writes the h5-file relative to the working directory
+    with contextlib.chdir(tmp_path):
+        job = fem.Job(steps=[step]).evaluate(
+            filename="result.xdmf",  # result file for Paraview
+            point_data={"Temperature": lambda field, substep: temperature.values},
+            point_data_default=False,
+            cell_data_default=False,
+        )
+
+    assert (tmp_path / "result.xdmf").exists()
 
 
 def test_timestep():
@@ -251,6 +247,8 @@ def test_timestep():
 
 
 if __name__ == "__main__":
-    test_thermal()
-    test_thermal_axi()
+    for test in [test_thermal, test_thermal_axi]:
+        with tempfile.TemporaryDirectory() as tmp:
+            test(tmp_path=pathlib.Path(tmp))
+
     test_timestep()

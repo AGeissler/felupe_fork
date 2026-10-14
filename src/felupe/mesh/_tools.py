@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 from scipy.interpolate import griddata
@@ -116,10 +100,8 @@ def expand(points, cells, cell_type, n=11, z=1, axis=-1, expand_dim=True):
         if np.isscalar(thickness):
             points_thickness = np.linspace(0, thickness, n)
         else:
-
             points_thickness = np.array(thickness)
             if cell_type_new == "hexahedron27":
-
                 points_thickness = np.vstack(
                     [
                         points_thickness,
@@ -888,8 +870,8 @@ def merge_duplicate_cells(points, cells, cell_type):
 
         >>> rect2
         <felupe Mesh object>
-            Number of points: 121
-            Number of cells:
+          Number of points: 121
+          Number of cells:
             quad: 100
 
     These two meshes are now stored in a :class:`~felupe.MeshContainer`.
@@ -1045,7 +1027,7 @@ def flip(points, cells, cell_type, mask=None):
     The sum of the differential volumes :math:`V = \sum_c \sum_q dV_{qc}` is evaluated
     to -1.0.
 
-    >>> region.dV.sum()
+    >>> print(region.dV.sum())
     -1.0
 
     Let's try to fix the mesh.
@@ -1068,7 +1050,7 @@ def flip(points, cells, cell_type, mask=None):
     A region now correctly evaluates the total volume of the mesh to 1.0.
 
     >>> region_fixed = fem.RegionQuad(mesh_fixed)
-    >>> region_fixed.dV.sum()
+    >>> print(region_fixed.dV.sum())
     1.0
 
     See Also
@@ -1101,7 +1083,7 @@ def flip(points, cells, cell_type, mask=None):
 
 @mesh_or_data
 def mirror(
-    points, cells, cell_type, normal=[1, 0, 0], centerpoint=[0, 0, 0], axis=None
+    points, cells, cell_type, normal=(1, 0, 0), centerpoint=(0, 0, 0), axis=None
 ):
     """Mirror points by plane normal and ensure positive cell volumes for
     `tria`, `tetra`, `quad` and `hexahedron` cell types.
@@ -1417,8 +1399,8 @@ def runouts(
     points,
     cells,
     cell_type,
-    values=[0.1, 0.1],
-    centerpoint=[0, 0, 0],
+    values=(0.1, 0.1),
+    centerpoint=(0, 0, 0),
     axis=0,
     exponent=5,
     mask=slice(None),

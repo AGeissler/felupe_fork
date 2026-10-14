@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import warnings
 from copy import deepcopy
@@ -108,16 +92,20 @@ class PlotMaterial:
             if hasattr(self.umat, "kwargs"):
                 p = []
                 for key, value in self.umat.kwargs.items():
-                    if hasattr(value, "__len__"):
-                        val = " ".join([f"{v:.3g}" for v in value])
-                        if len(value) > 1:
+                    if value is None:
+                        # optional arguments which are not set are not shown
+                        continue
+                    elif isinstance(value, str):
+                        val = f'"{value}"'
+                    elif callable(value):
+                        name = [v.title() for v in value.__name__.split("_")]
+                        val = f'"{" ".join(name)}"'
+                    elif np.ndim(value) > 0:
+                        val = " ".join([f"{v:.3g}" for v in np.ravel(value)])
+                        if np.size(value) > 1:
                             val = f"[{val}]"
                     else:
-                        if callable(value):
-                            name = [v.title() for v in value.__name__.split("_")]
-                            val = f'"{" ".join(name)}"'
-                        else:
-                            val = f"{value:.3g}"
+                        val = f"{value:.3g}"
                     p.append(f"{key}={val}")
                 parameters = ", ".join(p)
 

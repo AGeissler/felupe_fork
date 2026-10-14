@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from . import (
     assembly,
     constitution,
@@ -150,16 +152,13 @@ from .tools import (
     NewtonConvergenceError,
     hello_world,
     newtonraphson,
-    newtonrhapson,
     project,
     runs_on,
     save,
     topoints,
 )
-from .view import ViewField, ViewMesh
-from .view import ViewSolid
+from .view import ViewField, ViewMesh, ViewSolid, ViewXdmf
 from .view import ViewSolid as View
-from .view import ViewXdmf
 
 __all__ = [
     "__version__",
@@ -292,7 +291,6 @@ __all__ = [
     "RegionTruss",
     "RegionVertex",
     "newtonraphson",
-    "newtonrhapson",
     "EventDispatcher",
     "Context",
     "IterationState",

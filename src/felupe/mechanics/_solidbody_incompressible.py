@@ -1,31 +1,22 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import inspect
-import warnings
 
 import numpy as np
 
 from ..assembly import IntegralForm
 from ..constitution import AreaChange
 from ..field import FieldAxisymmetric
-from ..math import ddot, det, dot, dya, transpose
-from ._helpers import Assemble, Evaluate, Results, StateNearlyIncompressible
+from ..math import ddot, dya
+from ._helpers import (
+    Assemble,
+    Evaluate,
+    Results,
+    StateNearlyIncompressible,
+    cauchy_stress,
+    kirchhoff_stress,
+    mass_matrix,
+)
 from ._solidbody import Solid
 
 
@@ -79,15 +70,15 @@ class SolidBodyNearlyIncompressible(Solid):
             \int_V \hat{\psi}(\boldsymbol{F})\ dV +
             \int_V U(\bar{J})\ dV +
             \int_V p (J - \bar{J})\ dV
-    
+
     with its variations, see Eq. :eq:`nearlyinc-variations`
-    
+
     ..  math::
         :label: nearlyinc-variations
 
         \delta_\boldsymbol{u}(\Pi_{int}) &=
             \int_V \left( \frac{\partial \hat{\psi}}{\partial \boldsymbol{F}} +
-            p\ \frac{\partial J}{\partial \boldsymbol{F}} \right) : 
+            p\ \frac{\partial J}{\partial \boldsymbol{F}} \right) :
             \delta\boldsymbol{F}\ dV
         \longrightarrow \boldsymbol{r}_\boldsymbol{u}
 
@@ -98,12 +89,12 @@ class SolidBodyNearlyIncompressible(Solid):
         \delta_\bar{J}(\Pi_{int}) &=
             \int_V \left( K \left( \bar{J} - 1 \right) - p \right)\ \delta \bar{J}\ dV
         \longrightarrow r_{\bar{J}}
-    
+
     and linearizations, see Eq. :eq:`nearlyinc-linearizations` [1]_ [2]_ [3]_. The
     right-arrows in Eq. :eq:`nearlyinc-variations` and Eq.
     :eq:`nearlyinc-linearizations` represent the assembly into system scalars, vectors
     or matrices.
-    
+
     ..  math::
         :label: nearlyinc-linearizations
 
@@ -116,22 +107,22 @@ class SolidBodyNearlyIncompressible(Solid):
             \right) : \Delta\boldsymbol{F}\ dV
         \longrightarrow \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
 
-        
-        \delta_\boldsymbol{u}\Delta_p(\Pi_{int}) &= \int_V \delta \boldsymbol{F} : 
+
+        \delta_\boldsymbol{u}\Delta_p(\Pi_{int}) &= \int_V \delta \boldsymbol{F} :
             \frac{\partial J}{\partial \boldsymbol{F}}\ \Delta p\ dV
         \longrightarrow \boldsymbol{K}_{\boldsymbol{u}p}
-        
-        \delta_p\Delta_{\bar{J}}(\Pi_{int}) &= 
-            \int_V \delta p\ (-1)\ \Delta \bar{J}\ dV 
+
+        \delta_p\Delta_{\bar{J}}(\Pi_{int}) &=
+            \int_V \delta p\ (-1)\ \Delta \bar{J}\ dV
         \longrightarrow -V
-        
-        \delta_{\bar{J}}\Delta_{\bar{J}}(\Pi_{int}) &= 
-            \int_V \delta \bar{J}\ K\ \Delta \bar{J}\ dV 
+
+        \delta_{\bar{J}}\Delta_{\bar{J}}(\Pi_{int}) &=
+            \int_V \delta \bar{J}\ K\ \Delta \bar{J}\ dV
         \longrightarrow K\ V
-    
+
     The assembled constraint equations for the variations w.r.t. the dual fields
     :math:`p` and :math:`\bar{J}` are given in Eq. :eq:`nearlyinc-constraints`.
-    
+
     ..  math::
         :label: nearlyinc-constraints
 
@@ -167,7 +158,7 @@ class SolidBodyNearlyIncompressible(Solid):
         :label: hu-washizu
 
         \begin{bmatrix}
-            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}} 
+            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
                 & \boldsymbol{K}_{\boldsymbol{u}p} & \boldsymbol{0} \\
             \boldsymbol{K}_{\boldsymbol{u}p}^T & 0 & -V \\
             \boldsymbol{0}^T & -V  & K\ V
@@ -179,7 +170,7 @@ class SolidBodyNearlyIncompressible(Solid):
             \boldsymbol{r}_\boldsymbol{u} \\
             r_p \\
             r_\bar{J}
-        \end{bmatrix} = 
+        \end{bmatrix} =
         \begin{bmatrix}
             \boldsymbol{0}\\
             0 \\
@@ -194,7 +185,7 @@ class SolidBodyNearlyIncompressible(Solid):
         :label: nearlyinc-condensed
 
         \begin{bmatrix}
-            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}} 
+            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
                 & \boldsymbol{K}_{\boldsymbol{u}p} & \boldsymbol{0} \\
             K \boldsymbol{K}_{\boldsymbol{u}p}^T & 0 & -K\ V \\
             \boldsymbol{0}^T & -V  & K\ V
@@ -206,7 +197,7 @@ class SolidBodyNearlyIncompressible(Solid):
             \boldsymbol{r}_\boldsymbol{u} \\
             K\ r_p \\
             r_\bar{J}
-        \end{bmatrix} = 
+        \end{bmatrix} =
         \begin{bmatrix}
             \boldsymbol{0}\\
             0 \\
@@ -220,7 +211,7 @@ class SolidBodyNearlyIncompressible(Solid):
         :label: nearlyinc-contracted-sum
 
         \begin{bmatrix}
-            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}} 
+            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
                 & \boldsymbol{K}_{\boldsymbol{u}p} \\
             K \boldsymbol{K}_{\boldsymbol{u}p}^T & -V
         \end{bmatrix} \cdot \begin{bmatrix}
@@ -229,13 +220,13 @@ class SolidBodyNearlyIncompressible(Solid):
         \end{bmatrix} + \begin{bmatrix}
             \boldsymbol{r}_\boldsymbol{u} \\
             K\ r_p + r_\bar{J}
-        \end{bmatrix} = 
+        \end{bmatrix} =
         \begin{bmatrix}
             \boldsymbol{0}\\
             0
         \end{bmatrix}
 
-    Next, the second line is left-expanded by 
+    Next, the second line is left-expanded by
     :math:`\frac{1}{V}~\boldsymbol{K}_{\boldsymbol{u}p}` and both equations are summed
     up again, see :eq:`nearlyinc-contracted-sum-final`.
 
@@ -243,8 +234,8 @@ class SolidBodyNearlyIncompressible(Solid):
         :label: nearlyinc-contracted-sum-final
 
         \left(
-            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}} 
-                + \frac{K}{V}~\boldsymbol{K}_{\boldsymbol{u}p} \otimes 
+            \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
+                + \frac{K}{V}~\boldsymbol{K}_{\boldsymbol{u}p} \otimes
                     \boldsymbol{K}_{\boldsymbol{u}p}
         \right) \cdot \delta \boldsymbol{u} +
         \boldsymbol{r}_\boldsymbol{u} + \frac{K~r_p + r_\bar{J}}{V}
@@ -256,24 +247,24 @@ class SolidBodyNearlyIncompressible(Solid):
     ..  math::
         :label: nearlyinc-final
 
-        \delta \bar{J} &= \frac{1}{V} \delta \boldsymbol{u} \cdot 
+        \delta \bar{J} &= \frac{1}{V} \delta \boldsymbol{u} \cdot
             \boldsymbol{K}_{\boldsymbol{u}p} + \frac{v}{V} - \bar{J}
 
         \delta p &= K \left(\bar{J} + \delta \bar{J} - 1 \right) - p
 
     The condensed constraint equation in Eq. :eq:`nearlyinc-contracted-sum-final` is
     given in Eq. :eq:`nearlyinc-constraint`
-    
+
     ..  math::
         :label: nearlyinc-constraint
-        
+
         \frac{K~r_p + r_{\bar{J}}}{V} = K \left( \frac{v}{V} - 1 \right) - p
-    
+
     and the deformed volume is evaluated by Eq. :eq:`nearlyinc-deformed-volume`.
-    
+
     ..  math::
         :label: nearlyinc-deformed-volume
-        
+
         v = \int_V J\ dV
 
 
@@ -301,24 +292,24 @@ class SolidBodyNearlyIncompressible(Solid):
         >>>
         >>> job = fem.Job(steps=[step]).evaluate()
         >>> solid.plot("Principal Values of Cauchy Stress").show()
-    
+
     References
     ----------
     ..  [1] J. Bonet, A. J. Gil, and R. D. Wood, "Nonlinear Solid Mechanics for Finite
-        Element Analysis: Statics". Cambridge University Press, Jun. 05, 2016. 
+        Element Analysis: Statics". Cambridge University Press, Jun. 05, 2016.
         doi: 10.1017/cbo9781316336144.
 
     ..  [2] O. C. Zienkiewicz, R. L. Taylor and J.Z. Zhu, "The Finite Element Method:
         its Basis and Fundamentals". Elsevier, 2013. doi: 10.1016/c2009-0-24909-9.
-    
+
     ..  [3] G. A. Holzapfel, "Nonlinear Solid Mechanics. A Continuum Approach for
         Engineering". Wiley, 2000. isbn: 047182304X.
-    
+
     ..  [4] J. A. Schönherr, P. Schneider, and C. Mittelstedt, "Robust hybrid/mixed
         finite elements for rubber-like materials under severe compression",
         Computational Mechanics, vol. 70, no. 1. Springer Science and Business Media
         LLC, pp. 101–122, Mar. 31, 2022. doi: 10.1007/s00466-022-02157-y.
-    
+
     See Also
     --------
     felupe.StateNearlyIncompressible : A State with internal cell-wise constant fields
@@ -714,46 +705,23 @@ class SolidBodyNearlyIncompressible(Solid):
     def _kirchhoff_stress(self, field=None):
         self._gradient(field)
 
+        # the stress tensor of the formulation and the deformation gradient tensor
         P = self.results.stress[0]
         F = self.results.kinematics[0]
 
-        return dot(P, transpose(F))
+        return kirchhoff_stress(P, F)
 
     def _cauchy_stress(self, field=None):
         self._gradient(field)
 
+        # the stress tensor of the formulation and the deformation gradient tensor
         P = self.results.stress[0]
         F = self.results.kinematics[0]
 
-        if P.shape[:2] == (2, 2):
-            warnings.warn(
-                "\n".join(
-                    [
-                        "Cauchy stress tensor can't be evaluated on a 2d-Field.",
-                        "Falling-back to the Kirchhoff stress tensor.",
-                    ]
-                )
-            )
-            J = 1
-        else:
-            J = det(F)
-
-        return dot(P, transpose(F)) / J
+        return cauchy_stress(P, F)
 
     def _mass(self, density=None):
         if density is None:
             density = self.density
 
-        field = self.field[0].as_container()
-        dim = field[0].dim
-
-        form = self._form(
-            fun=[density * np.eye(dim).reshape(dim, dim, 1, 1)],
-            v=field,
-            u=field,
-            dV=field.region.dV,
-            grad_v=[False],
-            grad_u=[False],
-        )
-
-        return form.assemble()
+        return mass_matrix(self.field, density, form=self._form)

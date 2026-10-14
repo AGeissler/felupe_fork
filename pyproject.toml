@@ -5,8 +5,40 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.package-data]
 'felupe.view' = ['logo.png']
 
-[tool.isort]
-profile = "black"
+[tool.ruff]
+src = ["src"]
+# the published paper is not formatted
+extend-exclude = ["paper"]
+
+[tool.ruff.lint]
+# an explicit selection of rules, independent of the default rules of ruff
+select = [
+  "E4",  # imports (pycodestyle)
+  "E7",  # statements (pycodestyle)
+  "E9",  # runtime and syntax errors (pycodestyle)
+  "F",  # pyflakes
+  "B006",  # mutable default arguments
+  "I",  # sorted imports (isort)
+  "W",  # whitespace
+]
+ignore = [
+  "E731",  # lambda assignments, e.g. for short functions in tests and examples
+  "E741",  # ambiguous variable names, e.g. `l` (notation of continuum mechanics)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# the public API is re-exported
+"__init__.py" = ["F401"]
+# results of calls are bound to variables without being checked
+"tests/**" = ["F841"]
+# the scripts of sphinx-gallery import modules in later cells
+"examples/**" = ["E402"]
+"docs/tutorial/examples/**" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src/felupe"]
+addopts = ["--doctest-modules", "--import-mode=importlib"]
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 
 [project]
 name = "felupe"
@@ -15,7 +47,7 @@ readme = "README.md"
 authors = [
   {name = "Andreas Dutzler", email = "a.dutzler@gmail.com"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = [
@@ -40,7 +72,6 @@ classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -80,11 +111,10 @@ io = [
     "h5py",
     "meshio",
 ]
-parallel = ["einsumt"]
 progress = ["tqdm"]
 plot = ["matplotlib"]
 view = ["pyvista[jupyter]"]
-all = ["felupe[autodiff,io,parallel,plot,progress,view]"]
+all = ["felupe[autodiff,io,plot,progress,view]"]
 
 [dependency-groups]
 read-the-docs = ["felupe[all,docs,examples]"]
@@ -97,6 +127,9 @@ default = true
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+# only for the packages pinned to this index in `tool.uv.sources`, i.e. the other
+# packages (e.g. numpy) are not taken from it
+explicit = true
 
 [tool.uv.sources]
 setuptools = {index = "pypi"}

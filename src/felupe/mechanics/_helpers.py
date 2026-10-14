@@ -1,27 +1,14 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+import warnings
 
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
 import numpy as np
 from scipy.sparse import csr_matrix
 
 from ..assembly import IntegralForm
 from ..constitution import AreaChange
 from ..field import FieldAxisymmetric
-from ..math import det
+from ..math import det, dot, transpose
 
 
 class Assemble:
@@ -92,6 +79,83 @@ class Results:
     def update_statevars(self):
         if self._statevars is not None:
             self.statevars = self._statevars
+
+
+def kirchhoff_stress(P, F):
+    r"""Return the Kirchhoff stress tensor for given first Piola-Kirchhoff stress and
+    deformation gradient tensors.
+
+    ..  math::
+
+        \boldsymbol{\tau} = \boldsymbol{P} \boldsymbol{F}^T
+
+    The tensors are given by a solid body, which defines the stress tensor of its
+    formulation, e.g. including the contribution of an internal pressure field.
+    """
+
+    return dot(P, transpose(F))
+
+
+def cauchy_stress(P, F):
+    r"""Return the Cauchy stress tensor for given first Piola-Kirchhoff stress and
+    deformation gradient tensors.
+
+    ..  math::
+
+        \boldsymbol{\sigma} = \frac{1}{J} \boldsymbol{P} \boldsymbol{F}^T
+
+    For two-dimensional tensors, the volume ratio :math:`J` is not available and the
+    Kirchhoff stress tensor is returned (with a warning).
+    """
+
+    if P.shape[:2] == (2, 2):
+        warnings.warn(
+            "\n".join(
+                [
+                    "Cauchy stress tensor can't be evaluated on a 2d-Field.",
+                    "Falling-back to the Kirchhoff stress tensor.",
+                ]
+            )
+        )
+        J = 1
+    else:
+        J = det(F)
+
+    return dot(P, transpose(F)) / J
+
+
+def mass_matrix(field, density, form=IntegralForm):
+    r"""Return the assembled mass matrix of the first field of a field container.
+
+    ..  math::
+
+        \int_V \rho\ \delta \boldsymbol{u} \cdot \Delta \boldsymbol{u}\ dV
+
+    The integral form of a vector-valued axisymmetric field takes a function with an
+    additional out-of-plane component, which is multiplied by :math:`u_r / R` (like the
+    circumferential stretch). The displacements of an axisymmetric field have no
+    circumferential component, i.e. the out-of-plane component of the function is zero
+    and the mass matrix is the in-plane mass matrix of the volumes of the rings
+    :math:`dV = 2 \pi R\ dA`. A scalar axisymmetric field, e.g. the temperature of a
+    :class:`~felupe.thermal.SolidBodyThermal`, has no out-of-plane component.
+    """
+
+    field = field[0].as_container()
+    identity = np.eye(field[0].dim)
+
+    if isinstance(field[0], FieldAxisymmetric) and field[0].dim > 1:
+        identity = np.pad(identity, (0, 1))  # zero out-of-plane component
+
+    integral = form(
+        fun=[density * identity.reshape(*identity.shape, 1, 1)],
+        v=field,
+        u=field,
+        dV=field.region.dV,
+        grad_v=[False],
+        grad_u=[False],
+    )
+
+    return integral.assemble()
 
 
 class StateNearlyIncompressible:

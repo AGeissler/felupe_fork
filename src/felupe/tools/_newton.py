@@ -1,24 +1,7 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import inspect
 from copy import deepcopy
-from time import perf_counter
 
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -406,7 +389,14 @@ def solve(A, b, x, dof1, dof0, offsets=None, ext0=None, solver=spsolve):
 
 
 def check(dx, x, f, xtol, ftol, dof1=None, dof0=None, items=None, eps=1e-3):
-    "Check result."
+    """Check the convergence of the Newton-Raphson method (without side effects).
+
+    The norm of the residuals of the active degrees of freedom is divided by the norm of
+    the residuals (the reaction forces) of the prescribed degrees of freedom. The
+    argument ``items`` is not used, the state variables of the items are updated by
+    :func:`~felupe.newtonraphson` after a converged iteration, see
+    :func:`update_statevars`.
+    """
 
     def sumnorm(x):
         return np.sum(norm(x))
@@ -422,11 +412,19 @@ def check(dx, x, f, xtol, ftol, dof1=None, dof0=None, items=None, eps=1e-3):
     fnorm = sumnorm(f[dof1]) / (eps + sumnorm(f[dof0]))
     success = fnorm < ftol and xnorm < xtol
 
-    if success and items is not None:
-        for item in items:
-            item.results.update_statevars()
-
     return xnorm, fnorm, success
+
+
+def update_statevars(items):
+    """Accept the trial state variables of the items for a converged solution.
+
+    The trial state variables of the last evaluation of the items become the state
+    variables of the converged solution, by ``item.results.update_statevars()``, see
+    :class:`~felupe.mechanics.Item`.
+    """
+
+    for item in items:
+        item.results.update_statevars()
 
 
 def update(x, dx):
@@ -460,9 +458,6 @@ def newtonraphson(
     ext0=None,
     solver=spsolve,
     verbose=None,
-    callback=None,
-    callback_kwargs=None,
-    progress_bar=None,
     tqdm="tqdm",
     dispatcher=None,
     plugins=None,
@@ -492,13 +487,16 @@ def newtonraphson(
         Callable to update the unknowns. Function signature must be
         ``update = lambda x0, dx: x``.
     check : callable, optional
-        Callable to check the result with signature
-        ``check = lambda xnorm, fnorm, success: dx, x, **kwargs``.
+        Callable to check the convergence with the signature
+        ``xnorm, fnorm, success = check(dx, x, f, xtol, ftol, dof1, dof0, items)``.
+        The state variables of the items are updated by the Newton-Raphson method after
+        a converged iteration, i.e. a custom ``check`` doesn't update them.
     tol : float, optional
         Tolerance value to check if the function has converged (default is 1.490e-8).
     items : list or None, optional
         List with items which provide methods for assembly, e.g. like
-        :class:`felupe.SolidBody` (default is None).
+        :class:`felupe.SolidBody` (default is None). See
+        :class:`~felupe.mechanics.Item` for the interface of an item.
     dof1 : ndarray or None, optional
         1d-array of int with all active degrees of freedom (default is None).
     dof0 : ndarray or None, optional
@@ -516,13 +514,6 @@ def newtonraphson(
         Default is None. If None, verbosity is set to True. If None and the
         environmental variable FELUPE_VERBOSE is set and its value is not ``true``,
         then logging is turned off.
-    callback : callable or None, optional
-        An optional callback function with function signature
-        ``callback = lambda dx, x, iteration, xnorm, fnorm, success: None``, which is
-        called after each completed iteration. Default is None.
-    progress_bar : tqdm or None, optional
-        Use an existing instance of a progress bar if verbose is True. If None and
-        verbose is True, a new bar is created. Default is None.
     tqdm : str, optional
         If verbose is True, choose a backend for ``tqdm`` (``"tqdm"``, ``"auto"`` or
         ``"notebook"``). Default is ``"tqdm"``.
@@ -533,6 +524,11 @@ def newtonraphson(
         A list of plugins with hooks to be used during evaluation, e.g. a
         :class:`~felupe.LinesearchPlugin`. If a ``dispatcher`` is given, the plugins
         are added to a copy of the dispatcher for this evaluation. Default is None.
+
+        ..  versionchanged:: 12.0.0
+            The arguments ``callback``, ``callback_kwargs`` and ``progress_bar`` are
+            removed. A plugin with the hook ``after_iteration`` replaces the
+            ``callback``, see the notes below.
 
     Returns
     -------
@@ -616,6 +612,40 @@ def newtonraphson(
 
         x = x_n + \alpha\ dx
 
+    A plugin with the hook ``after_iteration`` replaces the ``callback`` (removed in
+    12.0.0), which was called after each completed iteration. The arguments of the
+    callback are attributes of the state of the iteration, see
+    :class:`~felupe.tools.IterationState`. The same plugin is used for the iterations
+    of all substeps of a :class:`~felupe.Job`, e.g.
+    ``Job(steps, plugins=[NewtonCallback()])`` replaces
+    ``Job.evaluate(callback=callback)``. A callable plugin can't be used here, because
+    it is only called after each completed substep of a job (and never by
+    :func:`~felupe.newtonraphson` alone).
+
+    ..  code-block:: python
+
+        def callback(dx, x, iteration, xnorm, fnorm, success):
+            ...
+
+        # removed in 12.0.0
+        # res = fem.newtonraphson(items, **loadcase, callback=callback)
+
+        # use a plugin instead
+        class NewtonCallback(fem.Plugin):
+            def after_iteration(self, context, state):
+                callback(
+                    state.dx,
+                    state.x,
+                    state.iteration,
+                    state.xnorm,
+                    state.fnorm,
+                    state.success,
+                )
+
+        res = fem.newtonraphson(items, **loadcase, plugins=[NewtonCallback()])
+
+    The plugin gets the same values as the callback, after each completed iteration.
+
     Examples
     --------
     >>> import numpy as np
@@ -688,7 +718,7 @@ def newtonraphson(
         return fun(x, *args, **kwargs)
 
     def converged(dx, x, f):
-        "Check the convergence without side effects (no update of state variables)."
+        "Check the convergence for given unknowns, e.g. of a trial of a plugin."
         return check(
             dx=dx, x=x, f=f, xtol=np.inf, ftol=tol, dof1=dof1, dof0=dof0, items=None
         )
@@ -714,7 +744,6 @@ def newtonraphson(
 
     # iteration loop
     for iteration in range(maxiter):
-
         state.iteration = iteration
         state.alpha = None
         state.updated = False
@@ -765,14 +794,13 @@ def newtonraphson(
         xnorm, fnorm, success = check(
             dx=dx, x=x, f=f, xtol=np.inf, ftol=tol, dof1=dof1, dof0=dof0, items=items
         )
+
+        if success and items is not None:
+            # accept the trial state variables of the items for the converged solution
+            update_statevars(items)
+
         xnorms.append(xnorm)
         fnorms.append(fnorm)
-
-        if callback is not None:
-            if callback_kwargs is None:
-                callback_kwargs = {}
-
-            callback(dx, x, iteration, xnorm, fnorm, success)
 
         isnan = np.any(np.isnan([xnorm, fnorm]))
         abort = 1 + iteration == maxiter and not success

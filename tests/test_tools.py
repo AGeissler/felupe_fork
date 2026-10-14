@@ -1,30 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
 import os
+import pathlib
+import tempfile
 
 import numpy as np
 import pytest
@@ -44,7 +22,7 @@ def pre():
     return r, f, (u, p, J)
 
 
-def test_solve():
+def test_solve(tmp_path):
     r, _, (u, p, J) = pre()
     f = fem.FieldContainer([u])
 
@@ -66,13 +44,14 @@ def test_solve():
     dx = fem.tools.solve(A, b, f, dof0, dof1, f.offsets, ext0)
     assert dx[0].shape == f[0].values.ravel().shape
 
-    fem.tools.save(r, f)
-    fem.tools.save(r, f, forces=b)
+    fem.tools.save(r, f, filename=tmp_path / "result.vtu")
+    fem.tools.save(r, f, forces=b, filename=tmp_path / "result.vtu")
     fem.tools.save(
         r,
         f,
         forces=b,
         gradient=W.gradient(F),
+        filename=tmp_path / "result.vtu",
     )
 
     for b in [L.assemble(), L.assemble().toarray(), L.assemble().toarray()[:, 0]]:
@@ -110,7 +89,7 @@ def test_hello_world():
     fem.hello_world(container=True, planestrain=True)
 
 
-def test_solve_mixed():
+def test_solve_mixed(tmp_path):
     r, f, fields = pre()
     u = fields[0]
 
@@ -140,13 +119,14 @@ def test_solve_mixed():
     assert dx[1].shape == fields[1].values.ravel().shape
     assert dx[2].shape == fields[2].values.ravel().shape
 
-    fem.tools.save(r, f)
-    fem.tools.save(r, f, forces=b)
+    fem.tools.save(r, f, filename=tmp_path / "result.vtu")
+    fem.tools.save(r, f, forces=b, filename=tmp_path / "result.vtu")
     fem.tools.save(
         r,
         f,
         forces=b,
         gradient=W_mixed.gradient([F, p, J]),
+        filename=tmp_path / "result.vtu",
     )
 
     force = fem.tools.force(f, b, bounds["symx"])
@@ -554,8 +534,11 @@ def test_resize():
 
 if __name__ == "__main__":
     test_hello_world()
-    test_solve()
-    test_solve_mixed()
+
+    for test in [test_solve, test_solve_mixed]:
+        with tempfile.TemporaryDirectory() as tmp:
+            test(tmp_path=pathlib.Path(tmp))
+
     test_newton_update()
     test_newton_simple()
     test_newton()

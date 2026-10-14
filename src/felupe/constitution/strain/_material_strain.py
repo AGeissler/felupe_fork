@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
@@ -198,7 +182,10 @@ class MaterialStrain(ConstitutiveMaterial):
         self.framework = framework
         self.symmetry = symmetry
 
-        self.kwargs = {**kwargs, "tangent": None}
+        # the flag `tangent` is passed to the material for each evaluation, i.e. the
+        # keyword-arguments contain only the parameters of the material
+        kwargs.pop("tangent", None)
+        self.kwargs = kwargs
 
         self.dim = dim
         self.x = [np.eye(dim), np.zeros(2 * dim**2 + self.nstatevars)]
@@ -251,15 +238,17 @@ class MaterialStrain(ConstitutiveMaterial):
 
         return strain_old, dstrain, stress_old, statevars_old, rotation
 
-    def gradient(self, x):
+    def _gradient(self, x):
         strain_old, dstrain, stress_old, statevars_old, rotation = self.extract(x)
-        self.kwargs["tangent"] = False
+
+        # the chunks of cells may be evaluated by threads: don't change the kwargs
+        kwargs = {**self.kwargs, "tangent": False}
 
         # unpack deformation gradient F = dx/dX
         dxdX, statevars = x
 
         dsde, stress_new, statevars_new_list = self.material(
-            dstrain, strain_old, stress_old, statevars_old, **self.kwargs
+            dstrain, strain_old, stress_old, statevars_old, **kwargs
         )
 
         strain_new_1d = (strain_old + dstrain).reshape(-1, *strain_old.shape[2:])
@@ -286,27 +275,27 @@ class MaterialStrain(ConstitutiveMaterial):
 
         return [stress_new, statevars_new]
 
-    def hessian(self, x):
+    def _hessian(self, x):
         strain_old, dstrain, stress_old, statevars_old, rotation = self.extract(x)
-        self.kwargs["tangent"] = True
+
+        # the chunks of cells may be evaluated by threads: don't change the kwargs
+        kwargs = {**self.kwargs, "tangent": True}
 
         # unpack deformation gradient F = dx/dX
         dxdX, statevars = x
 
         dsde, stress_new, statevars_new_list = self.material(
-            dstrain, strain_old, stress_old, statevars_old, **self.kwargs
+            dstrain, strain_old, stress_old, statevars_old, **kwargs
         )
         dsde = np.ascontiguousarray(dsde)
 
         if self.symmetry:
-
             # enforce minor symmetries on the algorithmic consistent elasticity tensor
             dsde = np.add(dsde, np.einsum("ijlk...->ijkl...", dsde), out=dsde)
             dsde = np.add(dsde, np.einsum("jikl...->ijkl...", dsde), out=dsde)
             dsde = np.multiply(dsde, 0.25, out=dsde)
 
         if self.framework in ["total-lagrange", "co-rotational"]:
-
             phi = {
                 "total-lagrange": dxdX,
                 "co-rotational": rotation,

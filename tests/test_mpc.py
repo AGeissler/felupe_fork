@@ -1,29 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
-
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 import pytest
@@ -316,7 +291,7 @@ def test_mpc_rotation_matrix():
 
     from scipy.spatial.transform import Rotation
 
-    from felupe.mechanics._multipoint import _SKEW_BASE, _rotation
+    from felupe.mechanics._multipoint._rodrigues import _SKEW_BASE, _rotation
 
     rng = np.random.default_rng(seed=5)
     direction = rng.normal(size=3)
@@ -361,7 +336,7 @@ def test_mpc_rotation_matrix_jax():
     jax = pytest.importorskip("jax")
     import jax.numpy as jnp
 
-    from felupe.mechanics._multipoint import _rotation
+    from felupe.mechanics._multipoint._rodrigues import _rotation
 
     x64 = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", True)
@@ -408,7 +383,7 @@ def mpc_rotation_model(dim, seed=None, increment=0.3):
     )
 
     if seed is not None:
-        from felupe.mechanics._multipoint import _rotation
+        from felupe.mechanics._multipoint._rodrigues import _rotation
 
         rng = np.random.default_rng(seed=seed)
         axes = mpc._rotation_axes

@@ -1,22 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
-
-import numpy as np
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from ..plugins import CharacteristicCurvePlugin
 from ._job import Job
@@ -25,25 +7,27 @@ from ._job import Job
 class CharacteristicCurve(Job):
     r"""A job with a list of steps and a method to evaluate them. Force-displacement
     curve data is tracked during evaluation for a given :class:`~felupe.Boundary` by
-    a built-in ``callback``.
+    a built-in :class:`~felupe.CharacteristicCurvePlugin`.
 
     Parameters
     ----------
     steps : list of Step
         A list with steps, where each step subsequently depends on the solution of the
         previous step.
+    boundary : Boundary
+        The boundary condition, whose displacements and reaction forces are tracked.
     items : list of SolidBody, SolidBodyNearlyIncompressible, SolidBodyPressure, SolidBodyGravity, PointLoad, MultiPointConstraint, MultiPointContact or None, optional
         A list of items with methods for the assembly of sparse vectors/matrices which
         are used to evaluate the sum of reaction forces. If None, the total reaction
         forces from the :class:`~felupe.tools.NewtonResult` of the substep are used.
-    callback : callable, optional
-        A callable which is called after each completed substep. Function signature must
-        be ``lambda stepnumber, substepnumber, substep, **kwargs: None``, where
-        ``substep`` is an instance of :class:`~felupe.tools.NewtonResult`. The field
-        container of the completed substep is available as ``substep.x``. Default
-        is ``callback=lambda stepnumber, substepnumber, substep, **kwargs: None``.
-    **kwargs : dict, optional
-        Optional keyword-arguments for the ``callback`` function.
+    plugins : list or None, optional
+        A list of plugins, see :class:`~felupe.Job` (default is None). The
+        :class:`~felupe.CharacteristicCurvePlugin` is added to the end of the list.
+
+        ..  versionchanged:: 12.0.0
+            ``plugins`` is a keyword-only argument. The arguments ``callback`` and
+            ``**kwargs`` (for the callback) are removed, a callable plugin replaces the
+            callback, see the notes of :class:`~felupe.Job`.
 
     Examples
     --------
@@ -97,19 +81,11 @@ class CharacteristicCurve(Job):
 
     """
 
-    def __init__(
-        self,
-        steps,
-        boundary,
-        items=None,
-        callback=lambda stepnumber, substepnumber, substep, **kwargs: None,
-        **kwargs,
-    ):
+    def __init__(self, steps, boundary, items=None, *, plugins=None):
         self._curve = CharacteristicCurvePlugin(boundary=boundary, items=items)
 
-        kwargs_internal = kwargs.copy()
-        plugins = kwargs_internal.pop("plugins", []) + [self._curve]
-        super().__init__(steps, plugins=plugins, callback=callback, **kwargs_internal)
+        plugins = [*(plugins or []), self._curve]
+        super().__init__(steps, plugins=plugins)
 
         self.items = self._curve.items
         self.boundary = self._curve.boundary

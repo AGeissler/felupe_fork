@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
@@ -33,6 +17,9 @@ class NeoHookeCompressible(ConstitutiveMaterial):
         Shear modulus (second Lamé constant). Default is None.
     lmbda : float or None, optional
         First Lamé constant (default is None)
+    parallel : bool, optional
+        A flag to evaluate the gradient and the hessian in chunks of cells by a pool of
+        threads (default is False).
 
     Notes
     -----
@@ -119,7 +106,7 @@ class NeoHookeCompressible(ConstitutiveMaterial):
         lmbda = self.lmbda
 
         lnJ = np.log(det(F))
-        C = dot(transpose(F), F, parallel=self.parallel)
+        C = dot(transpose(F), F)
 
         W = mu * (trace(C) / 2 - lnJ)
 
@@ -128,16 +115,15 @@ class NeoHookeCompressible(ConstitutiveMaterial):
 
         return [W]
 
-    def gradient(self, x, out=None):
+    def _gradient(self, x):
         """Gradient of the strain energy density function per unit undeformed volume of
-        the Neo-Hookean material formulation.
+        the Neo-Hookean material formulation, evaluated for a chunk of cells by
+        :meth:`~felupe.ConstitutiveMaterial.gradient`.
 
         Parameters
         ----------
         x : list of ndarray
             List with the Deformation gradient ``F`` (3x3) as first item
-        out : ndarray or None, optional
-            A location into which the result is stored (default is None).
         """
 
         F, statevars = x[0], x[-1]
@@ -149,7 +135,7 @@ class NeoHookeCompressible(ConstitutiveMaterial):
         iFT = transpose(inv(F, J))
         lnJ = np.log(J, out=J)
 
-        P = np.multiply(mu, F, out=out)
+        P = np.multiply(mu, F)
 
         if lmbda is None:
             Pb = np.multiply(iFT, -mu, out=iFT)
@@ -161,16 +147,15 @@ class NeoHookeCompressible(ConstitutiveMaterial):
 
         return [P, statevars]
 
-    def hessian(self, x, out=None):
+    def _hessian(self, x):
         """Hessian of the strain energy density function per unit undeformed volume of
-        the Neo-Hookean material formulation.
+        the Neo-Hookean material formulation, evaluated for a chunk of cells by
+        :meth:`~felupe.ConstitutiveMaterial.hessian`.
 
         Parameters
         ----------
         x : list of ndarray
             List with the Deformation gradient ``F`` (3x3) as first item
-        out : ndarray or None, optional
-            A location into which the result is stored (default is None).
         """
 
         F = x[0]
@@ -183,7 +168,7 @@ class NeoHookeCompressible(ConstitutiveMaterial):
         lnJ = np.log(J, out=J)
         eye = identity(F)
 
-        iFTiFT = cdya_il(iFT, iFT, out=out)
+        iFTiFT = cdya_il(iFT, iFT)
         A4a = cdya_ik(eye, eye)
         try:
             np.multiply(mu, A4a, out=A4a)

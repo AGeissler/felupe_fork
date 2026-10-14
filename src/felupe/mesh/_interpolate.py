@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 
@@ -75,7 +59,6 @@ def interpolate_line(mesh, xi, axis=None, Interpolator=None, **kwargs):
         from scipy.interpolate import PchipInterpolator as Interpolator
 
     if axis is None:  # progress-based interpolation
-
         distances = np.linalg.norm(np.diff(mesh.points, axis=0), axis=1)
         progress = np.insert(np.cumsum(distances), 0, 0)
         progress /= progress.max()
@@ -89,7 +72,6 @@ def interpolate_line(mesh, xi, axis=None, Interpolator=None, **kwargs):
         mesh_new.points_derivative = spline.derivative()(xi)
 
     else:  # independent- and dependent-variables
-
         # line connectivity
         # concatenate the first point of each cell and the last point of the last cell
         line = np.concatenate([mesh.cells[:, :-1].ravel(), mesh.cells[-1, -1:]])

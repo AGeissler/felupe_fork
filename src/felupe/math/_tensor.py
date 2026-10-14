@@ -1,35 +1,17 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from collections import namedtuple
+from functools import partial
 
 import numpy as np
 
-try:
-    from einsumt import einsumt
-except ModuleNotFoundError:
-    from numpy import einsum as einsumt
+from ._einsum import einsum_chunks
 
 
 def identity(A=None, dim=None, shape=None, dtype=None):
     r"""Return identity matrices with ones on the diagonal of the first two axes and
-    zeros elsewhere. 
-    
+    zeros elsewhere.
+
     Parameters
     ----------
     A : ndarray of shape (N, M, ...) or None, optional
@@ -51,52 +33,52 @@ def identity(A=None, dim=None, shape=None, dtype=None):
     -------
     ndarray of shape (N, M, *np.ones_like(...)) or (dim, dim, *np.ones_like(...))
         The identity matrix.
-    
+
     Notes
     -----
     The first two axes are the matrix dimensions and all remaining trailing axes are
     treated as batch dimensions. As the identity matrix is independent of the input
     matrices ``A``, the size of the trailing axes is reduced to one.
-    
+
     The identity matrix is defined by Eq. :eq:`math-identity`
-    
+
     ..  math::
         :label: math-identity
-        
-        \boldsymbol{1} = \boldsymbol{A} \boldsymbol{A}^{-1} 
+
+        \boldsymbol{1} = \boldsymbol{A} \boldsymbol{A}^{-1}
             = \boldsymbol{A}^{-1} \boldsymbol{A}
-    
+
     and it is shown in Eq. :eq:`math-identity-items`.
-    
+
     ..  math::
         :label: math-identity-items
-        
+
         \boldsymbol{1} = \begin{bmatrix}
                 1 & 0 & 0 \\
                 0 & 1 & 0 \\
                 0 & 0 & 1
             \end{bmatrix}
-    
+
     Examples
     --------
     >>> import felupe as fem
     >>> import numpy as np
-    >>> 
+    >>>
     >>> A = np.random.rand(3, 2, 8, 20)
     >>> I = fem.math.identity(A)
     >>> I.shape
     (3, 2, 1, 1)
-    
+
     With given dimension of the matrix axes the shape of the output is different.
-    
+
     >>> fem.math.identity(A, dim=2).shape
     (2, 2, 1, 1)
-    
+
     Note how the number of batch axes change if a ``shape`` is given.
-    
+
     >>> fem.math.identity(A, shape=(4, 7, 3)).shape
     (3, 2, 1, 1, 1)
-    
+
     See Also
     --------
     numpy.eye : Return a 2-D array with ones on the diagonal and zeros elsewhere.
@@ -289,7 +271,7 @@ def inv(A, determinant=None, full_output=False, sym=False, out=None):
 
         \boldsymbol{A}^{-1} &= \frac{1}{\det(\boldsymbol{A})}
             \text{cof}(\boldsymbol{A})^T
-    
+
     ..  math::
         :label: math-inv-matrix
 
@@ -318,13 +300,13 @@ def inv(A, determinant=None, full_output=False, sym=False, out=None):
     array([[1. , 1.3, 1.5],
            [1.3, 1.1, 1.4],
            [1.5, 1.4, 1.2]])
-    
+
     >>> invA = fem.math.inv(A)
     >>> invA[..., 0]
     array([[-2.01892744,  1.70347003,  0.5362776 ],
            [ 1.70347003, -3.31230284,  1.73501577],
            [ 0.5362776 ,  1.73501577, -1.86119874]])
-    
+
     >>> fem.math.dot(A, invA)[..., 0].round(3)
     array([[ 1., -0.,  0.],
            [-0.,  1.,  0.],
@@ -698,15 +680,18 @@ def eig(a, eig=np.linalg.eig, **kwargs):
     >>>
     >>> C = fem.math.dot(fem.math.transpose(F), F)
     >>> w, v = fem.math.eig(C)
-    >>>
-    >>> w[0]
+
+    The eigenvalues of the symmetric tensors are real. Depending on the version of
+    NumPy, they are returned as an array of complex type with zero imaginary parts.
+
+    >>> w[0].real
     array([1.15619667, 2.57066372])
 
     The associated eigenvectors are extracted. The first column is the eigenvector
     for the first right Cauchy-Green deformation tensor and the second column for the
     second right Cauchy-Green deformation tensor.
 
-    >>> v[:, 0]
+    >>> v[:, 0].real
     array([[0.88697868, 0.        ],
            [0.        , 0.01659066],
            [0.46181038, 0.99986237]])
@@ -1020,10 +1005,7 @@ def cdya_ik(A, B, parallel=False, **kwargs):
     felupe.math.cdya_il : il-crossed dyadic product of two second-order tensors.
 
     """
-    if parallel:
-        einsum = einsumt
-    else:
-        einsum = np.einsum
+    einsum = partial(einsum_chunks, parallel=True) if parallel else np.einsum
     return einsum("ij...,kl...->ikjl...", A, B, **kwargs)
 
 
@@ -1088,10 +1070,7 @@ def cdya_il(A, B, parallel=False, **kwargs):
     felupe.math.cdya : Crossed dyadic product of two second-order tensors.
 
     """
-    if parallel:
-        einsum = einsumt
-    else:
-        einsum = np.einsum
+    einsum = partial(einsum_chunks, parallel=True) if parallel else np.einsum
     return einsum("ij...,kl...->ilkj...", A, B, **kwargs)
 
 
@@ -1218,10 +1197,7 @@ def cross(a, b):
 def dot(A, B, mode=(2, 2), parallel=False, **kwargs):
     "Dot-product of A and B with inputs of n trailing axes.."
 
-    if parallel:
-        einsum = einsumt
-    else:
-        einsum = np.einsum
+    einsum = partial(einsum_chunks, parallel=True) if parallel else np.einsum
 
     if mode == (2, 2):
         return einsum("ik...,kj...->ij...", A, B, **kwargs)
@@ -1352,10 +1328,7 @@ def ddot(A, B, mode=(2, 2), parallel=False, **kwargs):
 
     """
 
-    if parallel:
-        einsum = einsumt
-    else:
-        einsum = np.einsum
+    einsum = partial(einsum_chunks, parallel=True) if parallel else np.einsum
 
     if mode == (2, 2):
         return einsum("ij...,ij...->...", A, B, **kwargs)
@@ -1411,10 +1384,7 @@ def dddot(A, B, mode=(3, 3), parallel=False, **kwargs):
         c &= A_{ijk} : B_{ijk}
     """
 
-    if parallel:
-        einsum = einsumt
-    else:
-        einsum = np.einsum
+    einsum = partial(einsum_chunks, parallel=True) if parallel else np.einsum
 
     if mode == (3, 3):
         return einsum("ijk...,ijk...->...", A, B, **kwargs)
@@ -1444,7 +1414,7 @@ def tovoigt(A, strain=False):
     -----
     The first two axes are the tensor dimensions and all remaining trailing axes are
     treated as batch dimensions.
-    
+
     For a symmetric three-dimensional second-order tensor :math:`C_{ij} = C_{ji}`, the
     upper triangle entries are inserted into a 6x1 vector, starting from the main
     diagonal, followed by the consecutive next upper diagonals.
@@ -1469,7 +1439,7 @@ def tovoigt(A, strain=False):
     array([[1. , 1.3, 1.5],
            [1.3, 1.1, 1.4],
            [1.5, 1.4, 1.2]])
-    
+
     >>> fem.math.tovoigt(C)[..., 0]
     array([1. , 1.1, 1.2, 1.3, 1.4, 1.5])
 

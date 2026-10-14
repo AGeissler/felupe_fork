@@ -1,29 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
 from copy import deepcopy
 
 import numpy as np
@@ -291,10 +267,10 @@ def test_symmetry():
     with pytest.raises(TypeError):
         fem.dof.symmetry(field)
 
-    with pytest.raises(ValueError):
-        fem.dof.symmetry(field[0], bounds=boundaries, boundaries=boundaries)
+    fem.dof.symmetry(field[0], boundaries=boundaries)
+    assert list(boundaries.keys()) == ["symx", "symy"]
 
-    with pytest.warns(DeprecationWarning):
+    with pytest.raises(TypeError):  # removed in v12.0.0
         fem.dof.symmetry(field[0], bounds=boundaries)
 
 
@@ -308,18 +284,21 @@ def test_boundarydict_iter():
     items = fem.dof.uniaxial(field, return_loadcase=False).items()
 
 
-def test_loadcase_deprecated():
+def test_loadcase_default():
     field = fem.FieldPlaneStrain(
         fem.RegionQuad(fem.Rectangle(n=3)), dim=2
     ).as_container()
 
     for loadcase in [fem.dof.uniaxial, fem.dof.shear, fem.dof.biaxial]:
+        # only the dict of boundaries is returned by default (since v12.0.0)
+        boundaries = loadcase(field)
+        assert isinstance(boundaries, fem.BoundaryDict)
 
-        with pytest.warns(DeprecationWarning):
-            my_loadcase = loadcase(field)
+        with pytest.raises(TypeError):
+            boundaries, my_loadcase = loadcase(field)
 
-        with pytest.warns(DeprecationWarning):
-            my_loadcase = loadcase(field, return_loadcase=None)
+        boundaries, my_loadcase = loadcase(field, return_loadcase=True)
+        assert sorted(my_loadcase.keys()) == ["dof0", "dof1", "ext0"]
 
 
 if __name__ == "__main__":
@@ -331,4 +310,4 @@ if __name__ == "__main__":
     test_loadcase()
     test_symmetry()
     test_boundarydict_iter()
-    test_loadcase_deprecated()
+    test_loadcase_default()

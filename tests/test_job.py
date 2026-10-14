@@ -1,29 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
-
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import contextlib
 import io
@@ -68,24 +43,22 @@ def pre():
     return field, step
 
 
-def weather(i, j, res, outside):
-    assert outside == "rainy"
-
-
 def test_job():
     field, step = pre()
     job = fem.Job(steps=[step])
     job.evaluate()
     field, step = pre()
-    job = fem.Job(steps=[step], callback=weather, outside="rainy")
+    substeps = []
+    job = fem.Job(steps=[step], plugins=[lambda context, state: substeps.append(state)])
     job.evaluate(
         parallel=True,
         kwargs={"parallel": False},
         verbose=0,
     )
+    assert [state.substepnumber for state in substeps] == list(range(11))
 
 
-def test_job_xdmf():
+def test_job_xdmf(tmp_path):
     field, step = pre()
 
     job = fem.Job(steps=[step])
@@ -93,20 +66,29 @@ def test_job_xdmf():
 
     field, step = pre()
     job = fem.Job(steps=[step])
-    job.evaluate(filename="result.xdmf", parallel=True, verbose=2)
+
+    with contextlib.chdir(tmp_path):
+        job.evaluate(filename="result.xdmf", parallel=True, verbose=2)
+
+    assert (tmp_path / "result.xdmf").exists()
+    assert (tmp_path / "result.h5").exists()
 
 
-def test_job_xdmf_global_field():
+def test_job_xdmf_global_field(tmp_path):
     field, step = pre()
     job = fem.Job(steps=[step])
     job.evaluate()
 
     field, step = pre()
     job = fem.Job(steps=[step])
-    job.evaluate(filename="result.xdmf", x0=field, tqdm="auto")
+
+    with contextlib.chdir(tmp_path):
+        job.evaluate(filename="result.xdmf", x0=field, tqdm="auto")
+
+    assert (tmp_path / "result.xdmf").exists()
 
 
-def test_job_xdmf_vertex():
+def test_job_xdmf_vertex(tmp_path):
 
     import felupe as fem
 
@@ -139,18 +121,20 @@ def test_job_xdmf_vertex():
 
     job = fem.Job(steps=[step])
 
-    with pytest.warns(UserWarning):
+    with contextlib.chdir(tmp_path), pytest.warns(UserWarning):
         job.evaluate(x0=field, filename="result.xdmf", mesh=container.meshes[0])
+
+    assert (tmp_path / "result.xdmf").exists()
 
 
 def test_curve():
     field, step = pre()
 
+    substeps = []
     curve = fem.CharacteristicCurve(
         steps=[step],
         boundary=step.boundaries["move"],
-        callback=weather,
-        outside="rainy",
+        plugins=[lambda context, state: substeps.append(state)],
     )
 
     with pytest.raises(ValueError):
@@ -173,6 +157,7 @@ def test_curve():
     os.environ.pop("FELUPE_VERBOSE")
 
     assert np.allclose(np.array(curve.y)[:, 0], force, rtol=0.01)
+    assert len(substeps) == len(curve.x)
 
 
 def test_curve2():
@@ -245,17 +230,6 @@ def test_noramp():
     job.evaluate()
 
 
-@contextlib.contextmanager
-def working_directory(path):
-    "Change the working directory (meshio writes the h5-file relative to it)."
-    cwd = os.getcwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(cwd)
-
-
 @pytest.mark.filterwarnings("ignore:Matrix is exactly singular")
 def test_job_after_job_on_error(tmp_path):
     """The hook ``after_job`` is also triggered if the evaluation of a job fails, e.g.
@@ -285,7 +259,8 @@ def test_job_after_job_on_error(tmp_path):
     recorder = Recorder()
     job = fem.Job(steps=[step], plugins=[recorder])
 
-    with working_directory(tmp_path):
+    # meshio writes the h5-file relative to the working directory
+    with contextlib.chdir(tmp_path):
         with pytest.raises(ValueError, match="NaN") as excinfo:
             with np.errstate(all="ignore"):
                 job.evaluate(filename="result.xdmf", verbose=0)
@@ -367,7 +342,7 @@ def test_job_repeated_evaluate(tmp_path):
         # one header is printed by one progress plugin in each evaluation
         assert stdout.getvalue().count("Run Job") == 1
 
-    with working_directory(tmp_path):
+    with contextlib.chdir(tmp_path):
         job.evaluate(filename="first.xdmf", verbose=0)
         assert (tmp_path / "first.xdmf").exists()
 
@@ -383,16 +358,105 @@ def test_job_repeated_evaluate(tmp_path):
     assert job.dispatcher.plugins == plugins
 
 
+def test_callback_removed():
+    "The removed callbacks and their keyword-arguments raise a TypeError."
+
+    field, step = pre()
+
+    def callback(stepnumber, substepnumber, substep, **kwargs):
+        pass
+
+    with pytest.raises(TypeError):
+        fem.Job(steps=[step], callback=callback)
+
+    with pytest.raises(TypeError):
+        fem.Job([step], callback)  # plugins is a keyword-only argument
+
+    with pytest.raises(TypeError):
+        fem.Job(steps=[step], plugin=[])  # e.g. a typo of plugins
+
+    with pytest.raises(TypeError):
+        fem.CharacteristicCurve(
+            steps=[step], boundary=step.boundaries["move"], callback=callback
+        )
+
+    # the callback of newtonraphson() was passed by Job.evaluate()
+    with pytest.raises(TypeError):
+        fem.Job(steps=[step]).evaluate(callback=lambda *args: None, verbose=0)
+
+    field, step = pre()
+    _, loadcase = fem.dof.uniaxial(field, return_loadcase=True)
+
+    for kwargs in [{"callback": print}, {"progress_bar": 1}, {"callback_kwargs": {}}]:
+        with pytest.raises(TypeError):
+            fem.newtonraphson(items=step.items, **loadcase, verbose=0, **kwargs)
+
+
+def test_callback_plugins():
+    "The plugins of the notes of Job and newtonraphson(), which replace callbacks."
+
+    mesh = fem.Cube(n=3)
+    region = fem.RegionHexahedron(mesh)
+    field = fem.FieldContainer([fem.Field(region, dim=3)])
+    boundaries = fem.dof.uniaxial(field, clamped=True)
+    solid = fem.SolidBody(fem.NeoHooke(mu=1, bulk=2), field)
+    move = fem.math.linsteps([0, 0.2], num=2)
+    step = fem.Step(
+        items=[solid], ramp={boundaries["move"]: move}, boundaries=boundaries
+    )
+
+    substeps, iterations = [], []
+
+    def callback(stepnumber, substepnumber, substep, **kwargs):
+        substeps.append((stepnumber, substepnumber, substep, kwargs))
+
+    def newton_callback(dx, x, iteration, xnorm, fnorm, success):
+        iterations.append((iteration, fnorm, success))
+
+    class NewtonCallback(fem.Plugin):
+        def after_iteration(self, context, state):
+            newton_callback(
+                state.dx,
+                state.x,
+                state.iteration,
+                state.xnorm,
+                state.fnorm,
+                state.success,
+            )
+
+    plugins = [
+        lambda context, state: callback(
+            state.stepnumber, state.substepnumber, context.substep, a=1
+        ),
+        NewtonCallback(),
+    ]
+    fem.Job(steps=[step], plugins=plugins).evaluate(verbose=0)
+
+    assert [(i, j, kwargs) for i, j, _, kwargs in substeps] == [
+        (0, j, {"a": 1}) for j in range(3)
+    ]
+
+    # the iterations of all substeps, the last one of each substep has converged
+    results = [substep for _, _, substep, _ in substeps]
+    assert len(iterations) == sum(res.iterations for res in results)
+    converged = [(fnorm, success) for _, fnorm, success in iterations if success]
+    assert converged == [(res.fnorms[-1], True) for res in results]
+
+
 if __name__ == "__main__":
     test_job()
-    test_job_xdmf()
-    test_job_xdmf_global_field()
-    test_job_xdmf_vertex()
+
+    for test in [test_job_xdmf, test_job_xdmf_global_field, test_job_xdmf_vertex]:
+        with tempfile.TemporaryDirectory() as tmp:
+            test(tmp_path=pathlib.Path(tmp))
+
     test_curve()
     test_curve2()
     test_curve_custom_items()
     test_empty()
     test_noramp()
+    test_callback_removed()
+    test_callback_plugins()
 
     with tempfile.TemporaryDirectory() as tmp:
         test_job_after_job_on_error(tmp_path=pathlib.Path(tmp))

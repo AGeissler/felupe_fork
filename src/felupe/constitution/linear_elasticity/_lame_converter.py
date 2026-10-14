@@ -1,20 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
 from numpy.linalg import inv
 
 
@@ -93,7 +78,7 @@ def lame_converter_orthotropic(E, nu, G):
             -\frac{\nu_{13}}{E_1} & -\frac{\nu_{23}}{E_2} & \frac{1}{E_3}
                 & 0 & 0 & 0 \\
             0 & 0 & 0 & \frac{1}{G_{12}} & 0 & 0 \\
-            0 & 0 & 0 & 0 & \frac{1}{G_{23}} & 0 \\  
+            0 & 0 & 0 & 0 & \frac{1}{G_{23}} & 0 \\
             0 & 0 & 0 & 0 & 0 & \frac{1}{G_{31}}
         \end{bmatrix}
 
@@ -108,7 +93,7 @@ def lame_converter_orthotropic(E, nu, G):
             \lambda_{11} & \lambda_{12} + 2 \mu_2 & \lambda_{13} & 0 & 0 & 0 \\
             \lambda_{11} & \lambda_{12} & \lambda_{13} + 2 \mu_3 & 0 & 0 & 0 \\
             0 & 0 & 0 & \frac{\mu_1 + \mu_2}{2} & 0 & 0 \\
-            0 & 0 & 0 & 0 & \frac{\mu_2 + \mu_3}{2} & 0 \\  
+            0 & 0 & 0 & 0 & \frac{\mu_2 + \mu_3}{2} & 0 \\
             0 & 0 & 0 & 0 & 0 & \frac{\mu_3 + \mu_1}{2}
         \end{bmatrix}
 

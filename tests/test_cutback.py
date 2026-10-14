@@ -1,32 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
-
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import contextlib
-import os
 import pathlib
 import tempfile
 
@@ -1181,17 +1155,6 @@ def test_cutback_merged_fields():
     assert np.allclose(field[0].values, field_ref[0].values, rtol=1e-12, atol=1e-14)
 
 
-@contextlib.contextmanager
-def working_directory(path):
-    "Change the working directory (meshio writes the h5-file relative to it)."
-    cwd = os.getcwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(cwd)
-
-
 def test_cutback_xdmf(tmp_path):
     """A result file is written for all substeps, if the Newton-Raphson method of a
     substep reaches the maximum number of iterations and the substep is recovered."""
@@ -1207,7 +1170,8 @@ def test_cutback_xdmf(tmp_path):
     cutback = fem.CutbackPlugin()
     job = fem.Job(steps=[step], plugins=[cutback])
 
-    with working_directory(tmp_path):
+    # meshio writes the h5-file relative to the working directory
+    with contextlib.chdir(tmp_path):
         job.evaluate(verbose=0, filename="result.xdmf", maxiter=4)
 
         with meshio.xdmf.TimeSeriesReader("result.xdmf") as reader:

@@ -1,30 +1,19 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import inspect
-import warnings
 
 import numpy as np
 
 from ..assembly import IntegralForm
-from ..math import det, dot, transpose
 from ..view import ViewSolid
-from ._helpers import Assemble, Evaluate, Results
+from ._helpers import (
+    Assemble,
+    Evaluate,
+    Results,
+    cauchy_stress,
+    kirchhoff_stress,
+    mass_matrix,
+)
 
 
 class Solid:
@@ -665,46 +654,23 @@ class SolidBody(Solid):
     def _kirchhoff_stress(self, field=None):
         self._gradient(field)
 
+        # the stress tensor of the formulation and the deformation gradient tensor
         P = self.results.stress[0]
         F = self.results.kinematics[0]
 
-        return dot(P, transpose(F))
+        return kirchhoff_stress(P, F)
 
     def _cauchy_stress(self, field=None):
         self._gradient(field)
 
+        # the stress tensor of the formulation and the deformation gradient tensor
         P = self.results.stress[0]
         F = self.results.kinematics[0]
 
-        if P.shape[:2] == (2, 2):
-            warnings.warn(
-                "\n".join(
-                    [
-                        "Cauchy stress tensor can't be evaluated on a 2d-Field.",
-                        "Falling-back to the Kirchhoff stress tensor.",
-                    ]
-                )
-            )
-            J = 1
-        else:
-            J = det(F)
-
-        return dot(P, transpose(F)) / J
+        return cauchy_stress(P, F)
 
     def _mass(self, density=None):
         if density is None:
             density = self.density
 
-        field = self.field[0].as_container()
-        dim = field[0].dim
-
-        form = IntegralForm(
-            fun=[density * np.eye(dim).reshape(dim, dim, 1, 1)],
-            v=field,
-            u=field,
-            dV=field.region.dV,
-            grad_v=[False],
-            grad_u=[False],
-        )
-
-        return form.assemble()
+        return mass_matrix(self.field, density)

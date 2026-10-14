@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from ..math import displacement
 from ._mesh import ViewMesh
@@ -60,7 +44,7 @@ class ViewField(ViewMesh):
         >>> mesh = fem.Cube(n=3)
         >>> region = fem.RegionHexahedron(mesh)
         >>> u = np.sqrt(1 + np.arange(81)).reshape(27, 3) / 100
-        >>> field = fem.FieldContainer([fem.Field(region, values=u)])
+        >>> field = fem.FieldContainer([fem.Field(region, dim=3, values=u)])
         >>>
         >>> view = fem.ViewField(field, project=fem.project)
         >>> view.plot("Principal Values of Logarithmic Strain").show()
@@ -84,7 +68,6 @@ class ViewField(ViewMesh):
         field_is_vector = field[0].dim == field.region.mesh.dim
 
         if hasattr(field.region, "dhdX") and field_is_vector:
-
             if project is None:
                 cell_data_from_field = {
                     "Deformation Gradient": field.evaluate.deformation_gradient()

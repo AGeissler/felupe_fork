@@ -1,25 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
-
-import warnings
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from ..plugins import ProgressPlugin, XDMFWriterPlugin
-from ..region import RegionVertex
 from ..tools import Context, EventDispatcher
 
 
@@ -66,12 +47,6 @@ class Job:
     steps : list of Step
         A list with steps, where each step subsequently depends on the solution of the
         previous step.
-    callback : callable, optional
-        A callable which is called after each completed substep. Function signature must
-        be ``lambda stepnumber, substepnumber, substep, **kwargs: None``, where
-        ``substep`` is an instance of :class:`~felupe.tools.NewtonResult`. The field
-        container of the completed substep is available as ``substep.x``. Default
-        is ``callback=lambda stepnumber, substepnumber, substep, **kwargs: None``.
     plugins : list or None, optional
         A list of plugins with hooks to be used during evaluation. Available hooks are
         ``before_job``, ``after_job``, ``before_step``, ``after_step`` and
@@ -85,8 +60,11 @@ class Job:
         hook. E.g., a backtracking line search is enabled by
         ``Job(steps, plugins=[LinesearchPlugin()])`` and failed substeps are subdivided
         by ``Job(steps, plugins=[CutbackPlugin()])``.
-    **kwargs : dict, optional
-        Optional keyword-arguments for the ``callback`` function.
+
+        ..  versionchanged:: 12.0.0
+            ``plugins`` is a keyword-only argument. The arguments ``callback`` and
+            ``**kwargs`` (for the callback) are removed, a callable plugin replaces the
+            callback, see the notes below.
 
     Attributes
     ----------
@@ -103,6 +81,39 @@ class Job:
         :class:`~felupe.XDMFWriterPlugin`, are not added to this dispatcher. Instead,
         :meth:`~felupe.Job.evaluate` creates a new dispatcher for each evaluation with
         the plugins of the job and the built-in plugins.
+
+    Notes
+    -----
+    A callable plugin is called after each completed substep (in the hook
+    ``after_substep``) with the context and the state of the substep. It replaces the
+    ``callback`` (removed in 12.0.0): the step number and the substep number are
+    available as ``state.stepnumber`` and ``state.substepnumber`` and the result of
+    the substep as ``context.substep`` (or ``state.result``). Keyword-arguments are
+    passed to the callback by a closure, e.g. a lambda function.
+
+    ..  code-block:: python
+
+        def callback(stepnumber, substepnumber, substep, **kwargs):
+            ...
+
+        # removed in 12.0.0
+        # job = fem.Job(steps, callback=callback, a=1)
+
+        # use a callable plugin instead
+        job = fem.Job(
+            steps,
+            plugins=[
+                lambda context, state: callback(
+                    state.stepnumber, state.substepnumber, context.substep, a=1
+                )
+            ],
+        )
+
+    Both are called with the same arguments. The removed callback was called before
+    the hook ``after_substep`` of all plugins. A callable plugin is called in the order
+    of the list of plugins, but always before the built-in plugins of
+    :meth:`~felupe.Job.evaluate`. Hence, it is called in the same order if it is the
+    first plugin in the list.
 
     Examples
     --------
@@ -128,6 +139,17 @@ class Job:
         >>> job = fem.Job(steps=[step]).evaluate()
         >>> solid.plot("Principal Values of Cauchy Stress").show()
 
+    A callable plugin is called after each completed substep, e.g. to save the maximum
+    displacement of each substep.
+
+    >>> umax = []
+    >>> def save(context, state):
+    ...     umax.append(context.substep.x[0].values.max())
+    >>>
+    >>> job = fem.Job(steps=[step], plugins=[save]).evaluate()
+    >>> len(umax)
+    6
+
     See Also
     --------
     Step : A Step with multiple substeps, subsequently depending on the solution
@@ -142,20 +164,12 @@ class Job:
 
     """
 
-    def __init__(
-        self,
-        steps,
-        callback=lambda stepnumber, substepnumber, substep, **kwargs: None,
-        plugins=None,
-        **kwargs,
-    ):
+    def __init__(self, steps, *, plugins=None):
         self.steps = steps
         self.nsteps = len(steps)
-        self.callback = callback
 
         self.timetrack = []
         self.fnorms = []
-        self.kwargs = kwargs
 
         self.dispatcher = EventDispatcher(plugins=plugins)
 
@@ -204,9 +218,9 @@ class Job:
             environmental variable FELUPE_VERBOSE is set and its value is not ``true``,
             then logging is turned off.
         parallel : bool, optional
-            Flag to use a threaded version of :func:`numpy.einsum` during assembly.
-            Requires ``einsumt``. This may add additional overhead to small-sized
-            problems. Default is False.
+            Flag to evaluate the contractions of :func:`numpy.einsum` during assembly
+            in chunks of cells by a pool of threads. This may add additional overhead
+            to small-sized problems. Default is False.
         tqdm : str, optional
             If verbose is True, choose a backend for ``tqdm`` ("tqdm", ``"auto"`` or
             ``"notebook"``. Default is ``"tqdm"``.
@@ -297,7 +311,6 @@ class Job:
         time = 0
 
         for j, step in enumerate(self.steps):
-
             context = Context(job=self, step=step)
             state = JobState(stepnumber=j, time=time)
             dispatcher.trigger("before_step", context, state)
@@ -310,8 +323,6 @@ class Job:
             for state in states:
                 substep = state.result
                 self.fnorms.append(substep.fnorms)
-
-                self.callback(j, state.substepnumber, substep, **self.kwargs)
 
                 context = Context(job=self, step=step, substep=substep)
                 dispatcher.trigger("after_substep", context, state)

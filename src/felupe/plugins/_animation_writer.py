@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
 
@@ -72,7 +56,7 @@ class AnimationWriterPlugin(Plugin):
         >>> umat = fem.NeoHooke(mu=1, bulk=2)
         >>> solid = fem.SolidBody(umat=umat, field=field)
         >>>
-        >>> move = fem.math.linsteps([0, 1, 0], num=5)
+        >>> move = fem.math.linsteps([0, 1, 0], num=2)
         >>> ramp = {boundaries["move"]: move}
         >>> step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
         >>>
@@ -81,8 +65,7 @@ class AnimationWriterPlugin(Plugin):
         ...     filename="animation.gif",
         ...     name="Principal Values of Logarithmic Strain",
         ... )
-        >>> job = fem.Job(steps=[step], plugins=[animation])
-        >>> job.evaluate()
+        >>> job = fem.Job(steps=[step], plugins=[animation]).evaluate()
 
     See Also
     --------
@@ -130,14 +113,15 @@ class AnimationWriterPlugin(Plugin):
                 color["color"] = self.colors[idx]  # pragma: no cover
 
             self.plotter = item.plot(  # pragma: no cover
-                plotter=self.plotter, **color, **self.kwargs  # pragma: no cover
+                plotter=self.plotter,
+                **color,
+                **self.kwargs,  # pragma: no cover
             )  # pragma: no cover
 
         if self.zoom_camera != 1.0:
             self.plotter.camera.zoom(self.zoom_camera)
 
         if self.filename is not None:
-
             _, extension = os.path.splitext(self.filename)
             if extension == ".gif":
                 self.write_frame = True
@@ -173,11 +157,10 @@ class AnimationWriterPlugin(Plugin):
                 self.plotter.camera.zoom(self.zoom_camera)  # pragma: no cover
 
         if self.show_text:  # pragma: no cover
-
             text = [  # pragma: no cover
                 f"FElupe {version}",  # pragma: no cover
                 f"Step {1 + state.stepnumber}, "  # pragma: no cover
-                f"Substep { 1 + state.substepnumber}",  # pragma: no cover
+                f"Substep {1 + state.substepnumber}",  # pragma: no cover
             ]  # pragma: no cover
 
             for mesh in self.plotter.meshes:  # pragma: no cover

@@ -1,1 +1,3 @@
-__version__ = "11.2.0-dev"
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+__version__ = "12.0.0-dev"

@@ -1,26 +1,12 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from copy import deepcopy as copy
 
 import numpy as np
 
 from ..math import dot, eigh, transpose
+from ..math._chunks import CHUNKSIZE_POINTS
+from ._chunks import evaluate_chunks
 from ._view import ViewMaterial, ViewMaterialIncompressible
 
 
@@ -95,10 +81,131 @@ class ConstitutiveMaterial:
 
         umat = MyMaterialFormulation()
 
+    Instead of the methods ``gradient(x)`` and ``hessian(x)``, a constitutive material
+    may implement the methods ``_gradient(x)`` and ``_hessian(x)``. These are
+    evaluated in chunks of cells by :meth:`gradient` and :meth:`hessian`, i.e. the
+    arrays of the input list ``x`` are sliced along their last axis. The intermediate
+    arrays of a chunk fit into the CPU caches, which speeds up the evaluation of large
+    arrays. The number of evaluation points (quadrature points times cells) per chunk
+    is given by the attribute ``chunksize`` (default is 8192, None evaluates all cells
+    at once). The chunks are evaluated by a pool of threads if the attribute
+    ``parallel`` is True (default is False). In this case, ``_gradient(x)`` and
+    ``_hessian(x)`` must be thread-safe, i.e. intermediate results must be local
+    variables (not attributes of the material). Optional output arrays (``out``) are
+    handled by :meth:`gradient` and :meth:`hessian`.
+
+    ..  code-block::
+
+        class MyMaterialFormulation(fem.ConstitutiveMaterial):
+
+            def __init__(self, parallel=False):
+                self.x = [np.zeros((3, 3))]
+                self.parallel = parallel
+
+            def _gradient(self, x):
+                "Gradients of the strain energy density function of a chunk of cells."
+
+                F, p, statevars = x[0], x[1], x[-1]
+                ...
+
+                return [dWdF, dWdp, statevars_new]
+
+            def _hessian(self, x):
+                "Hessians of the strain energy density function of a chunk of cells."
+
+                F, p, statevars = x[0], x[1], x[-1]
+                ...
+
+                return [d2WdFdF, d2WdFdp, d2Wdpdp]
+
     See Also
     --------
     felupe.constitutive_material : A decorator for a constitutive material definition.
     """
+
+    chunksize = CHUNKSIZE_POINTS
+    parallel = False
+
+    def gradient(self, x, *args, out=None, **kwargs):
+        """Return the evaluated gradient(s) of the strain energy density function,
+        evaluated by ``_gradient(x, *args, **kwargs)`` in chunks of cells.
+
+        Parameters
+        ----------
+        x : list of ndarray
+            The list with input arguments. These contain the extracted fields of a
+            :class:`~felupe.FieldContainer` along with the old vector of state
+            variables, ``[*field.extract(), statevars_old]``.
+        *args : tuple, optional
+            Optional arguments for ``_gradient()``.
+        out : ndarray or None, optional
+            A location into which the first gradient is stored (default is None).
+        **kwargs : dict, optional
+            Optional keyword-arguments for ``_gradient()``.
+
+        Returns
+        -------
+        list of ndarray
+            A list with the evaluated gradient(s) of the strain energy density function
+            and the updated vector of state variables.
+        """
+
+        return evaluate_chunks(
+            self._gradient,
+            x,
+            *args,
+            chunksize=self.chunksize,
+            parallel=self.parallel,
+            out=out,
+            **kwargs,
+        )
+
+    def hessian(self, x, *args, out=None, **kwargs):
+        """Return the evaluated upper-triangle components of the hessian(s) of the
+        strain energy density function, evaluated by ``_hessian(x, *args, **kwargs)``
+        in chunks of cells.
+
+        Parameters
+        ----------
+        x : list of ndarray
+            The list with input arguments. These contain the extracted fields of a
+            :class:`~felupe.FieldContainer` along with the old vector of state
+            variables, ``[*field.extract(), statevars_old]``.
+        *args : tuple, optional
+            Optional arguments for ``_hessian()``.
+        out : ndarray or None, optional
+            A location into which the first hessian is stored (default is None).
+        **kwargs : dict, optional
+            Optional keyword-arguments for ``_hessian()``.
+
+        Returns
+        -------
+        list of ndarray
+            A list with the evaluated upper-triangle components of the hessian(s) of the
+            strain energy density function.
+        """
+
+        return evaluate_chunks(
+            self._hessian,
+            x,
+            *args,
+            chunksize=self.chunksize,
+            parallel=self.parallel,
+            out=out,
+            **kwargs,
+        )
+
+    def _gradient(self, x, *args, **kwargs):
+        raise NotImplementedError(
+            "A constitutive material must implement either `gradient(x)` or "
+            "`_gradient(x)`, which is evaluated in chunks of cells."
+        )
+
+    def _hessian(self, x, *args, **kwargs):
+        raise NotImplementedError(
+            "A constitutive material must implement either `hessian(x)` or "
+            "`_hessian(x)`, which is evaluated in chunks of cells."
+        )
 
     def copy(self):
         "Return a deep-copy of the constitutive material."
@@ -250,13 +357,13 @@ class ConstitutiveMaterial:
         ..  warning::
             At least one load case, i.e. one of the arguments ``ux``, ``ps`` or ``bx``
             must not be ``None``.
-        
+
         ..  note::
             For JAX-based materials, double-precision is required to optimize material
             parameters.
 
             ..  code-block:: python
-                
+
                 import jax
 
                 jax.config.update("jax_enable_x64", True)
@@ -342,7 +449,7 @@ class ConstitutiveMaterial:
             >>>
             >>> ux = np.linspace(λ.min(), λ.max(), num=50)
             >>> ax = umat_new.plot(incompressible=True, ux=ux, bx=None, ps=None)
-            >>> ax.plot(λ, P, "C0x")
+            >>> lines = ax.plot(λ, P, "C0x")
 
         See Also
         --------
@@ -579,7 +686,9 @@ def constitutive_material(Material, name=None):
     if name is None:
         name = Material.__name__
 
-    class ConstitutiveMaterialDerived(ConstitutiveMaterial, Material):
+    # the methods of the material, e.g. ``gradient()`` and ``hessian()``, take
+    # precedence over the methods of the base class
+    class ConstitutiveMaterialDerived(Material, ConstitutiveMaterial):
         pass
 
     ConstitutiveMaterialDerived.__name__ = name
@@ -600,6 +709,9 @@ class CompositeMaterial(ConstitutiveMaterial):
 
     Notes
     -----
+    The gradients and the hessians are evaluated in chunks of cells, by a pool of
+    threads if any of the materials is parallel.
+
     ..  warning::
         Do not merge two constitutive materials with the same keys of material
         parameters. In this case, the values of these material parameters are taken from
@@ -623,14 +735,17 @@ class CompositeMaterial(ConstitutiveMaterial):
         self.kwargs = {**other_material.kwargs, **material.kwargs}
         self.x = material.x
 
-    def gradient(self, x, **kwargs):
+        # evaluate the chunks of cells in parallel, if any of the materials is parallel
+        self.parallel = any(getattr(m, "parallel", False) for m in self.materials)
+
+    def _gradient(self, x, **kwargs):
         gradients = [material.gradient(x, **kwargs) for material in self.materials]
         nfields = max(1, len(x) - 1)
         P = [np.sum([grad[i] for grad in gradients], axis=0) for i in range(nfields)]
         statevars_new = gradients[0][-1]
         return [*P, statevars_new]
 
-    def hessian(self, x, **kwargs):
+    def _hessian(self, x, **kwargs):
         hessians = [material.hessian(x, **kwargs) for material in self.materials]
         nfields = max(1, len(x) - 1)
         return [np.sum([hess[i] for hess in hessians], axis=0) for i in range(nfields)]

@@ -1,29 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
- _______  _______  ___      __   __  _______  _______
-|       ||       ||   |    |  | |  ||       ||       |
-|    ___||    ___||   |    |  | |  ||    _  ||    ___|
-|   |___ |   |___ |   |    |  |_|  ||   |_| ||   |___
-|    ___||    ___||   |___ |       ||    ___||    ___|
-|   |    |   |___ |       ||       ||   |    |   |___
-|___|    |_______||_______||_______||___|    |_______|
-
-This file is part of felupe.
-
-Felupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Felupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Felupe.  If not, see <http://www.gnu.org/licenses/>.
-
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import numpy as np
 import pytest
@@ -661,6 +636,64 @@ def test_contact_base():
         fem.mechanics.ContactRigidBase(field, points=[0, 1], centerpoint=-1)
 
 
+class ContactRigidCircle(fem.mechanics.ContactRigidBase):
+    "A custom rigid circle (sphere), like in the example of the base class."
+
+    def __init__(self, field, points, centerpoint, radius, **kwargs):
+        self.radius = radius
+        super().__init__(field, points, centerpoint, **kwargs)
+
+    def _kinematics(self, dx):
+        distance = np.linalg.norm(dx, axis=1)
+        normal = dx / distance.reshape(-1, 1)
+        nn = np.einsum("ai,aj->aij", normal, normal)
+        curvature = (np.eye(dx.shape[1]) - nn) / distance.reshape(-1, 1, 1)
+        return distance - self.radius, normal, curvature
+
+
+@pytest.mark.parametrize("friction", [0.0, 0.3])
+def test_contact_custom_surface(friction):
+    "A custom rigid surface of a subclass gives the same results as a rigid cylinder."
+
+    rng = np.random.default_rng(3)
+
+    mesh = fem.Rectangle(n=6)
+    mesh.add_points([0.5, 1.75])
+    displacement = fem.Field(fem.RegionQuad(mesh), dim=2)
+    field = fem.FieldContainer([displacement])
+    npoints = mesh.npoints - 1
+
+    kwargs = dict(
+        field=field,
+        points=np.arange(npoints),
+        centerpoint=-1,
+        radius=0.8,
+        friction=friction,
+        multiplier=50.0,
+        multiplier_tangential=20.0,
+    )
+    contacts = [fem.ContactRigidCylinder(**kwargs), ContactRigidCircle(**kwargs)]
+
+    # converged state
+    displacement.values[-1, -1] = -0.05
+    displacement.values[:-1] += 0.01 * rng.standard_normal((npoints, 2))
+
+    for contact in contacts:
+        contact.assemble.vector(field)
+        contact.results.update_statevars()
+
+    # trial state
+    displacement.values[-1] += [0.02, -0.1]
+    displacement.values[:-1] += 0.01 * rng.standard_normal((npoints, 2))
+
+    vectors = [contact.assemble.vector(field).toarray() for contact in contacts]
+    matrices = [contact.assemble.matrix().toarray() for contact in contacts]
+
+    assert np.any(contacts[0].results.active)
+    assert np.allclose(*vectors)
+    assert np.allclose(*matrices)
+
+
 def test_contact_cylinder_job():
     "A rubber strip is indented and dragged by a cylinder (with cutbacks)."
 
@@ -723,4 +756,5 @@ if __name__ == "__main__":
     test_contact_cylinder_errors()
     test_contact_cylinder_plot()
     test_contact_base()
+    test_contact_custom_surface(friction=0.3)
     test_contact_cylinder_job()

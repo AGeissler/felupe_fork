@@ -1,20 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from functools import wraps
 
@@ -1197,7 +1181,7 @@ class Mesh(DiscreteGeometry):
         The sum of the differential volumes :math:`V = \sum_c \sum_q dV_{qc}` is
         evaluated to -1.0.
 
-        >>> region.dV.sum()
+        >>> print(region.dV.sum())
         -1.0
 
         Let's try to fix the mesh.
@@ -1220,7 +1204,7 @@ class Mesh(DiscreteGeometry):
         A region now correctly evaluates the total volume of the mesh to 1.0.
 
         >>> region_fixed = fem.RegionQuad(mesh_fixed)
-        >>> region_fixed.dV.sum()
+        >>> print(region_fixed.dV.sum())
         1.0
 
         See Also
@@ -1231,7 +1215,7 @@ class Mesh(DiscreteGeometry):
         """
         return as_mesh(flip(self, mask=mask))
 
-    def mirror(self, normal=[1, 0, 0], centerpoint=[0, 0, 0], axis=None):
+    def mirror(self, normal=(1, 0, 0), centerpoint=(0, 0, 0), axis=None):
         """Mirror points by plane normal and ensure positive cell volumes for
         `tria`, `tetra`, `quad` and `hexahedron` cell types.
 
@@ -1357,8 +1341,8 @@ class Mesh(DiscreteGeometry):
 
     def add_runouts(
         self,
-        values=[0.1, 0.1],
-        centerpoint=[0, 0, 0],
+        values=(0.1, 0.1),
+        centerpoint=(0, 0, 0),
         axis=0,
         exponent=5,
         mask=slice(None),

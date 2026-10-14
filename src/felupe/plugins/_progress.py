@@ -1,22 +1,7 @@
-# -*- coding: utf-8 -*-
-"""
-This file is part of FElupe.
-
-FElupe is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-FElupe is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with FElupe.  If not, see <http://www.gnu.org/licenses/>.
-"""
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+from importlib.util import find_spec
 from time import perf_counter
 
 import numpy as np
@@ -103,11 +88,8 @@ class ProgressPlugin(Plugin):
             else:
                 self.verbose = FELUPE_VERBOSE == "true"
 
-        if self.verbose:
-            try:
-                import tqdm
-            except ModuleNotFoundError:  # pragma: no cover
-                self.verbose = 2  # pragma: no cover
+        if self.verbose and find_spec("tqdm") is None:
+            self.verbose = 2  # pragma: no cover
 
     def _import_tqdm(self):
 
@@ -129,7 +111,6 @@ class ProgressPlugin(Plugin):
         "Create one (Newton) or two (Job, Newton) progress bars, based on the context."
 
         if self.verbose == 1:
-
             if self.in_job:
                 total = sum([step.nsubsteps for step in context.job.steps])
                 self.progress_bar = self._tqdm(
@@ -200,7 +181,6 @@ class ProgressPlugin(Plugin):
             if state.fnorm > 0.0:
                 # initial log. ratio of first residual norm vs. tolerance norm
                 if self.decades is None:
-
                     # estimate convergence speed in log-scale
                     # (decades of residual reduction)
                     self.decades = max(1.0, np.log10(state.fnorm) - np.log10(state.tol))
@@ -281,7 +261,6 @@ class ProgressPlugin(Plugin):
         self.in_job = False
 
         if self.verbose == 1:
-
             if self.progress_bar is not None:
                 self.progress_bar.close()
 
