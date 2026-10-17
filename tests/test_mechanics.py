@@ -315,6 +315,244 @@ def test_solidbody_axi_incompressible():
         assert np.allclose(t1, t2)
 
 
+def volumetric_functions(bulk):
+    "The volumetric parts of the strain energy density function and its derivatives."
+
+    return {
+        "volume-ratio": (
+            lambda J: bulk * (J - 1) ** 2 / 2,
+            lambda J: bulk * (J - 1),
+            lambda J: bulk,
+        ),
+        "stretch": (
+            lambda J: 9 * bulk * (J ** (1 / 3) - 1) ** 2 / 2,
+            lambda J: 3 * bulk * (J ** (1 / 3) - 1) / J ** (2 / 3),
+            lambda J: bulk * (2 - J ** (1 / 3)) / J ** (5 / 3),
+        ),
+        "log": (
+            lambda J: bulk * np.log(J) ** 2 / 2,
+            lambda J: bulk * np.log(J) / J,
+            lambda J: bulk * (1 - np.log(J)) / J**2,
+        ),
+    }
+
+
+def custom_volumetric(bulk, kind):
+    "A custom volumetric part with the functions of a built-in kind."
+
+    U, dUdJ, d2UdJdJ = volumetric_functions(bulk)[kind]
+
+    class CustomVolumetricStrainEnergy(fem.VolumetricStrainEnergy):
+        def __init__(self):
+            pass
+
+        def __call__(self, J):
+            return U(J)
+
+        def dUdJ(self, J):
+            return dUdJ(J)
+
+        def d2UdJdJ(self, J):
+            return d2UdJdJ(J)
+
+    return CustomVolumetricStrainEnergy()
+
+
+def test_solidbody_incompressible_volumetric_homogeneous():
+    "A homogeneous deformation is equal to the one of the displacement formulation."
+
+    mu, bulk = 1.0, 5.0
+    region = fem.RegionHexahedron(fem.Cube(n=2))
+
+    for kind, (U, dUdJ, d2UdJdJ) in volumetric_functions(bulk).items():
+        for move in [0.4, -0.3]:
+            field = fem.FieldContainer([fem.Field(region, dim=3)])
+            solid = fem.SolidBodyNearlyIncompressible(
+                fem.NeoHooke(mu=mu), field, bulk=bulk, volumetric=kind
+            )
+
+            field_ref = fem.FieldContainer([fem.Field(region, dim=3)])
+            umat_ref = fem.NeoHooke(mu=mu, bulk=bulk, volumetric=kind)
+            solid_ref = fem.SolidBody(umat_ref, field_ref)
+
+            for item in [solid, solid_ref]:
+                boundaries = fem.dof.uniaxial(item.field, move=move)
+                step = fem.Step(items=[item], boundaries=boundaries)
+                fem.Job(steps=[step]).evaluate()
+
+            J = solid.results.state.J
+            assert not np.allclose(J, 1)
+            assert np.allclose(J, fem.math.det(field.extract()[0]))
+            assert np.allclose(solid.results.state.p, dUdJ(J))
+
+            assert np.allclose(field[0].values, field_ref[0].values)
+            assert np.allclose(
+                solid.evaluate.cauchy_stress(), solid_ref.evaluate.cauchy_stress()
+            )
+
+
+def test_solidbody_incompressible_volumetric_potential():
+    "The vector and the matrix are the derivatives of the mean dilatation potential."
+
+    bulk = 5.0
+    umat = fem.NeoHooke(mu=1)
+    region = fem.RegionHexahedron(fem.Cube(n=2))
+    rng = np.random.default_rng(1195)
+
+    def potential(field, U):
+        F = field.extract()
+        dV = field.region.dV
+        V = dV.sum(axis=0)
+        v = (fem.math.det(F[0]) * dV).sum(axis=0)
+        return np.sum(umat.function(F)[0] * dV) + np.sum(V * U(v / V))
+
+    for kind, (U, dUdJ, d2UdJdJ) in volumetric_functions(bulk).items():
+        field = fem.FieldContainer([fem.Field(region, dim=3)])
+        field[0].values[:] = 0.1 * rng.random(field[0].values.shape)
+        x = field[0].values.copy()
+
+        for kwargs in [
+            dict(bulk=bulk, volumetric=kind),
+            dict(volumetric=fem.VolumetricStrainEnergy(bulk=bulk, kind=kind)),
+            dict(volumetric=custom_volumetric(bulk, kind)),
+        ]:
+            field[0].values[:] = x
+            solid = fem.SolidBodyNearlyIncompressible(umat, field, **kwargs)
+
+            r = solid.assemble.vector(field).toarray().ravel()
+            K = solid.assemble.matrix(field).toarray()
+
+            # internal fields of the current deformation
+            J = solid.results.state.J
+            assert not np.allclose(J, 1)
+            assert np.allclose(J, solid.results.state.volume() / solid.V)
+            assert np.allclose(solid.results.state.p, dUdJ(J))
+
+            # directional derivatives by central differences
+            dx = rng.random(x.shape) - 0.5
+            eps = 1e-6
+            Pi = []
+            rr = []
+
+            for sign in [1, -1]:
+                field[0].values[:] = x + sign * eps * dx
+                Pi.append(potential(field, U))
+                rr.append(solid.assemble.vector(field).toarray().ravel())
+
+            dPi = (Pi[0] - Pi[1]) / (2 * eps)
+            dr = (rr[0] - rr[1]) / (2 * eps)
+
+            assert np.isclose(r @ dx.ravel(), dPi, rtol=1e-6)
+            assert np.allclose(K @ dx.ravel(), dr, rtol=1e-5, atol=1e-8)
+
+
+def test_solidbody_incompressible_volumetric_custom():
+    "The custom volumetric parts are equal to the built-in kinds."
+
+    bulk = 5000.0
+    region = fem.RegionHexahedron(fem.Cube(n=3))
+
+    for kind in volumetric_functions(bulk).keys():
+        results = []
+
+        for kwargs in [
+            dict(bulk=bulk, volumetric=kind),
+            dict(volumetric=custom_volumetric(bulk, kind)),
+        ]:
+            field = fem.FieldContainer([fem.Field(region, dim=3)])
+            solid = fem.SolidBodyNearlyIncompressible(
+                fem.NeoHooke(mu=1), field, **kwargs
+            )
+            boundaries = fem.dof.uniaxial(field, move=0.3, clamped=True)
+            step = fem.Step(items=[solid], boundaries=boundaries)
+            job = fem.Job(steps=[step]).evaluate()
+
+            assert np.isclose(job.fnorms[0][-1], 0)
+            results.append(
+                [field[0].values, solid.results.state.J, solid.results.state.p]
+            )
+
+        for value, value_custom in zip(*results):
+            assert np.allclose(value, value_custom)
+
+
+def test_solidbody_incompressible_volumetric_errors():
+    "Missing, unknown or ambiguous arguments of the volumetric part raise errors."
+
+    field = fem.FieldContainer([fem.Field(fem.RegionHexahedron(fem.Cube(n=2)), dim=3)])
+    umat = fem.NeoHooke(mu=1)
+
+    for kind in ["volume-ratio", "stretch", "log"]:
+        with pytest.raises(ValueError, match="bulk"):
+            fem.SolidBodyNearlyIncompressible(umat, field, volumetric=kind)
+
+    with pytest.raises(ValueError, match="Unknown"):
+        fem.SolidBodyNearlyIncompressible(umat, field, bulk=5000, volumetric="linear")
+
+    # an instance holds its own bulk modulus
+    with pytest.raises(ValueError, match="bulk modulus must be None"):
+        fem.SolidBodyNearlyIncompressible(
+            umat,
+            field,
+            bulk=5000,
+            volumetric=fem.VolumetricStrainEnergy(bulk=5000, kind="stretch"),
+        )
+
+    # the volumetric part of a kind uses the current bulk modulus
+    solid = fem.SolidBodyNearlyIncompressible(umat, field, bulk=5000)
+    assert isinstance(solid.volumetric, fem.VolumetricStrainEnergy)
+    assert solid.volumetric.kind == "volume-ratio"
+    assert np.isclose(solid.volumetric.dUdJ(2.0), 5000)
+    assert np.isclose(solid.volumetric.d2UdJdJ(2.0), 5000)
+
+    solid.bulk = 100
+    assert solid.volumetric.bulk == 100
+    assert np.isclose(solid.volumetric.dUdJ(2.0), 100)
+
+    # an instance is used as given
+    volumetric = custom_volumetric(5000, "log")
+    solid = fem.SolidBodyNearlyIncompressible(umat, field, volumetric=volumetric)
+    assert solid.bulk is None
+    assert solid.volumetric is volumetric
+
+
+def test_solidbody_incompressible_volumetric_restore_revolve():
+    "The volumetric part re-initializes the internal fields and it is revolved."
+
+    bulk = 50.0
+    U, dUdJ, d2UdJdJ = volumetric_functions(bulk)["log"]
+    region = fem.RegionQuad(fem.Rectangle(n=4))
+
+    for kwargs in [
+        dict(bulk=bulk, volumetric="log"),
+        dict(volumetric=custom_volumetric(bulk, "log")),
+    ]:
+        field = fem.FieldContainer([fem.FieldAxisymmetric(region, dim=2)])
+        solid = fem.SolidBodyNearlyIncompressible(fem.NeoHooke(mu=1), field, **kwargs)
+        boundaries = fem.dof.uniaxial(field, move=-0.2, clamped=True, sym=False)
+        step = fem.Step(items=[solid], boundaries=boundaries)
+        fem.Job(steps=[step]).evaluate()
+
+        # re-initialize the internal fields by the restored deformation
+        checkpoint = solid.checkpoint()
+        solid.results.state.p[:] = 0
+        solid.restore(checkpoint, restore_state=False)
+
+        J = solid.results.state.J
+        assert not np.allclose(J, 1)
+        assert np.allclose(J, checkpoint["results.state.J"])
+        assert np.allclose(solid.results.state.p, dUdJ(J))
+
+        # the volumetric part is passed to the revolved solid body
+        new_solid = solid.revolve(n=5, phi=90)
+        assert new_solid.bulk is solid.bulk
+        assert new_solid._volumetric is solid._volumetric
+
+        J = new_solid.results.state.J
+        assert np.allclose(new_solid.volumetric.dUdJ(J), dUdJ(J))
+        assert np.allclose(new_solid.volumetric.d2UdJdJ(J), d2UdJdJ(J))
+
+
 def test_solidbody_axi():
     umat, u = pre_axi()
     b = fem.SolidBody(umat=umat, field=u)
@@ -547,6 +785,37 @@ def test_threefield():
     step = fem.Step(items=[solid], boundaries=boundaries)
     job = fem.Job(steps=[step]).evaluate()
     assert np.isclose(job.fnorms[0][-1], 0)
+
+
+def test_threefield_volumetric():
+    "A homogeneous deformation is equal to the one of the displacement formulation."
+
+    mu, bulk = 1.0, 5.0
+    region = fem.RegionHexahedron(fem.Cube(n=2))
+
+    for kind in ["volume-ratio", "stretch", "log"]:
+        for move in [0.4, -0.3]:
+            field = fem.FieldsMixed(region, n=3)
+            umat = fem.NearlyIncompressible(
+                fem.NeoHooke(mu=mu), bulk=bulk, volumetric=kind
+            )
+            solid = fem.SolidBody(umat, field)
+
+            field_ref = fem.FieldContainer([fem.Field(region, dim=3)])
+            umat_ref = fem.NeoHooke(mu=mu, bulk=bulk, volumetric=kind)
+            solid_ref = fem.SolidBody(umat_ref, field_ref)
+
+            for item in [solid, solid_ref]:
+                boundaries = fem.dof.uniaxial(item.field, move=move)
+                step = fem.Step(items=[item], boundaries=boundaries)
+                job = fem.Job(steps=[step]).evaluate()
+                assert np.isclose(job.fnorms[0][-1], 0)
+
+            J = fem.math.det(field_ref.extract()[0])
+            assert not np.allclose(J, 1)
+            assert np.allclose(field[0].values, field_ref[0].values)
+            assert np.allclose(field[1].values, umat_ref.volumetric.dUdJ(J.mean()))
+            assert np.allclose(field[2].values, J.mean())
 
 
 def test_solidbody_cauchy_stress():
@@ -1053,6 +1322,11 @@ if __name__ == "__main__":
     test_solidbody()
     test_solidbody_cauchy_stress()
     test_solidbody_incompressible()
+    test_solidbody_incompressible_volumetric_homogeneous()
+    test_solidbody_incompressible_volumetric_potential()
+    test_solidbody_incompressible_volumetric_custom()
+    test_solidbody_incompressible_volumetric_errors()
+    test_solidbody_incompressible_volumetric_restore_revolve()
     test_solidbody_axi()
     test_solidbody_axi_incompressible()
     test_solidbody_planestrain()
@@ -1061,6 +1335,7 @@ if __name__ == "__main__":
     test_load()
     test_view()
     test_threefield()
+    test_threefield_volumetric()
     test_truss
     test_checkpoint()
     test_checkpoint_x0()

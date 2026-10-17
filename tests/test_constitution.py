@@ -1052,6 +1052,240 @@ def test_plot_title_kwargs(close_figs=True):
         plt.close(ax.get_figure())
 
 
+def test_volumetric_strain_energy():
+    "The volumetric strain energies and their derivatives w.r.t. the volume ratio."
+
+    bulk = 5.0
+    J = np.linspace(0.5, 3.0, 11)
+    eps = 1e-6
+
+    for kind in ["volume-ratio", "stretch", "log"]:
+        U = fem.VolumetricStrainEnergy(bulk=bulk, kind=kind)
+        assert U.kind == kind
+
+        # stress-free undeformed configuration with the bulk modulus as stiffness
+        assert np.isclose(U(1.0), 0)
+        assert np.isclose(U.dUdJ(1.0), 0)
+        assert np.isclose(U.d2UdJdJ(1.0), bulk)
+
+        # derivatives by central differences
+        dUdJ = (U(J + eps) - U(J - eps)) / (2 * eps)
+        d2UdJdJ = (U.dUdJ(J + eps) - U.dUdJ(J - eps)) / (2 * eps)
+
+        assert np.allclose(U.dUdJ(J), dUdJ)
+        assert np.allclose(U.d2UdJdJ(J), d2UdJdJ)
+
+    # the kinds are quadratic in the Seth-Hill strains of the volumetric stretch
+    stretch = np.cbrt(J)
+    strains = {
+        "volume-ratio": (stretch**3 - 1) / 3,
+        "stretch": stretch - 1,
+        "log": np.log(stretch),
+    }
+
+    for kind, strain in strains.items():
+        U = fem.VolumetricStrainEnergy(bulk=bulk, kind=kind)
+        assert np.allclose(U(J), 9 * bulk / 2 * strain**2)
+
+    # maximum of the first derivative in tension
+    U = fem.VolumetricStrainEnergy(bulk=bulk, kind="stretch")
+    assert np.isclose(U.dUdJ(8.0), 3 * bulk / 4)
+    assert np.isclose(U.d2UdJdJ(8.0), 0)
+
+    U = fem.VolumetricStrainEnergy(bulk=bulk, kind="log")
+    assert np.isclose(U.dUdJ(np.e), bulk / np.e)
+    assert np.isclose(U.d2UdJdJ(np.e), 0)
+
+    # the cubic root is real-valued for (linearized) negative volume ratios
+    U = fem.VolumetricStrainEnergy(bulk=bulk, kind="stretch")
+    for fun in [U, U.dUdJ, U.d2UdJdJ]:
+        assert np.all(np.isfinite(fun(np.array([-0.5, -0.1]))))
+
+    # the default kind and missing or unknown arguments
+    assert fem.VolumetricStrainEnergy(bulk=bulk).kind == "volume-ratio"
+
+    with pytest.raises(ValueError, match="bulk"):
+        fem.VolumetricStrainEnergy(bulk=None, kind="stretch")
+
+    with pytest.raises(ValueError, match="Unknown"):
+        fem.VolumetricStrainEnergy(bulk=bulk, kind="linear")
+
+
+def test_nh_volumetric():
+    "The volumetric parts of NeoHooke and Volumetric are equal to the ones by AD."
+
+    tm = pytest.importorskip("tensortrax.math")
+
+    # the volumetric parts for AD (tensortrax) and for the energy (numpy)
+    volumetric_ad = {
+        "volume-ratio": lambda J, bulk, math=tm: bulk / 2 * (J - 1) ** 2,
+        "stretch": lambda J, bulk, math=tm: 9 * bulk / 2 * (J ** (1 / 3) - 1) ** 2,
+        "log": lambda J, bulk, math=tm: bulk / 2 * math.log(J) ** 2,
+    }
+
+    def neo_hooke(C, mu, bulk, U):
+        J = tm.sqrt(tm.linalg.det(C))
+        return mu / 2 * (J ** (-2 / 3) * tm.trace(C) - 3) + U(J, bulk)
+
+    def volumetric(C, bulk, U):
+        return U(tm.sqrt(tm.linalg.det(C)), bulk)
+
+    class Log(fem.VolumetricStrainEnergy):
+        "A custom volumetric part (equal to the kind log)."
+
+        def __init__(self, bulk):
+            self.bulk = bulk
+
+        def __call__(self, J):
+            return self.bulk / 2 * np.log(J) ** 2
+
+        def dUdJ(self, J):
+            return self.bulk * np.log(J) / J
+
+        def d2UdJdJ(self, J):
+            return self.bulk * (1 - np.log(J)) / J**2
+
+    rng = np.random.default_rng(1198)
+    F = np.eye(3).reshape(3, 3, 1, 1) + 0.4 * (rng.random((3, 3, 8, 20)) - 0.5)
+    assert np.all(fem.math.det(F) > 0)
+    x = [F, np.zeros((0, 8, 20))]
+
+    def evaluate(umat, function=True):
+        W = umat.function(x)[0] if function else None
+        return W, umat.gradient(x)[0], umat.hessian(x)[0]
+
+    def energy(mu, bulk, U):
+        "The strain energy density function, evaluated by numpy."
+        J = fem.math.det(F)
+        W = U(J, bulk, math=np)
+        if mu is not None:
+            W += mu / 2 * (J ** (-2 / 3) * fem.math.ddot(F, F) - 3)
+        return W
+
+    def assert_allclose(results, results_ref):
+        for value, value_ref in zip(results, results_ref):
+            if value is not None:
+                assert np.allclose(value, value_ref)
+
+    mu, bulk = 1.0, 5.0
+
+    for kind, U in volumetric_ad.items():
+        umat_ad = fem.Hyperelastic(neo_hooke, mu=mu, bulk=bulk, U=U)
+        results = energy(mu, bulk, U), *evaluate(umat_ad, function=False)[1:]
+
+        for umat in [
+            fem.NeoHooke(mu=mu, bulk=bulk, volumetric=kind),
+            fem.NeoHooke(mu=mu, bulk=bulk, volumetric=kind, parallel=True),
+            fem.NeoHooke(
+                mu=mu, volumetric=fem.VolumetricStrainEnergy(bulk=bulk, kind=kind)
+            ),
+        ]:
+            assert_allclose(evaluate(umat), results)
+
+        composite = fem.NeoHooke(mu=mu) & fem.Volumetric(bulk=bulk, volumetric=kind)
+        assert_allclose(evaluate(composite, function=False), results)
+
+        umat_ad = fem.Hyperelastic(volumetric, bulk=bulk, U=U)
+        results = energy(None, bulk, U), *evaluate(umat_ad, function=False)[1:]
+        assert_allclose(evaluate(fem.Volumetric(bulk, volumetric=kind)), results)
+
+    # a custom volumetric part
+    results = evaluate(fem.NeoHooke(mu=mu, bulk=bulk, volumetric="log"))
+    assert_allclose(evaluate(fem.NeoHooke(mu=mu, volumetric=Log(bulk))), results)
+    assert_allclose(
+        evaluate(fem.Volumetric(volumetric=Log(bulk))),
+        evaluate(fem.Volumetric(bulk, volumetric="log")),
+    )
+
+    # without the bulk modulus, there is no volumetric part
+    umat = fem.NeoHooke(mu=mu, volumetric="log")
+    assert umat.volumetric is None
+    assert_allclose(evaluate(umat), evaluate(fem.NeoHooke(mu=mu)))
+
+    # the volumetric part of a kind uses the current bulk modulus
+    umat.bulk = bulk
+    assert umat.volumetric.kind == "log"
+    assert_allclose(evaluate(umat), evaluate(fem.NeoHooke(mu, bulk, volumetric="log")))
+
+    # the default volumetric part is unchanged
+    for value, value_ref in zip(
+        evaluate(fem.NeoHooke(mu=mu, bulk=bulk)),
+        evaluate(
+            fem.NeoHooke(
+                mu=mu, volumetric=fem.VolumetricStrainEnergy(bulk, kind="volume-ratio")
+            )
+        ),
+    ):
+        assert np.array_equal(value, value_ref)
+
+    # missing, unknown or ambiguous arguments
+    with pytest.raises(ValueError, match="Unknown"):
+        fem.NeoHooke(mu=mu, volumetric="linear")
+
+    with pytest.raises(ValueError, match="bulk modulus must be None"):
+        fem.NeoHooke(mu=mu, bulk=bulk, volumetric=Log(bulk))
+
+    with pytest.raises(ValueError, match="bulk"):
+        fem.Volumetric(volumetric="stretch")
+
+    with pytest.raises(ValueError, match="Unknown"):
+        fem.Volumetric(bulk, volumetric="linear")
+
+
+def test_nearly_incompressible_volumetric():
+    "The volumetric part of NearlyIncompressible is given by a kind or an instance."
+
+    rng = np.random.default_rng(1199)
+    F = np.eye(3).reshape(3, 3, 1, 1) + 0.2 * (rng.random((3, 3, 8, 20)) - 0.5)
+    p = rng.random((1, 8, 20))
+    J = 1 + 0.2 * (rng.random((1, 8, 20)) - 0.5)
+    x = [F, p, J, np.zeros((0, 8, 20))]
+
+    bulk = 5.0
+    umat_ref = fem.NearlyIncompressible(fem.NeoHooke(mu=1.0), bulk=bulk)
+    gradient_ref = umat_ref.gradient(x)
+    hessian_ref = umat_ref.hessian(x)
+
+    for kind in ["volume-ratio", "stretch", "log"]:
+        U = fem.VolumetricStrainEnergy(bulk=bulk, kind=kind)
+
+        for umat in [
+            fem.NearlyIncompressible(fem.NeoHooke(mu=1.0), bulk=bulk, volumetric=kind),
+            fem.NearlyIncompressible(fem.NeoHooke(mu=1.0), volumetric=U),
+        ]:
+            gradient = umat.gradient(x)
+            hessian = umat.hessian(x)
+
+            # the volumetric part
+            assert np.allclose(gradient[2], U.dUdJ(J) - p)
+            assert np.allclose(hessian[-1], U.d2UdJdJ(J))
+
+            # the other parts are independent of the volumetric part
+            for i in [0, 1]:
+                assert np.allclose(gradient[i], gradient_ref[i])
+            for i in [0, 1, 4]:
+                assert np.allclose(hessian[i], hessian_ref[i])
+
+    # the volumetric part of a kind uses the current bulk modulus
+    umat = fem.NearlyIncompressible(fem.NeoHooke(mu=1.0), bulk=bulk, volumetric="log")
+    umat.bulk = 2 * bulk
+    assert umat.volumetric.kind == "log"
+    assert np.allclose(
+        umat.gradient(x)[2],
+        fem.VolumetricStrainEnergy(bulk=2 * bulk, kind="log").dUdJ(J) - p,
+    )
+
+    # missing, unknown or ambiguous arguments
+    with pytest.raises(ValueError, match="bulk"):
+        fem.NearlyIncompressible(fem.NeoHooke(mu=1.0))
+
+    with pytest.raises(ValueError, match="Unknown"):
+        fem.NearlyIncompressible(fem.NeoHooke(mu=1.0), bulk=bulk, volumetric="linear")
+
+    with pytest.raises(ValueError, match="bulk modulus must be None"):
+        fem.NearlyIncompressible(fem.NeoHooke(mu=1.0), bulk=bulk, volumetric=U)
+
+
 if __name__ == "__main__":
     close_figs = True
 
@@ -1082,3 +1316,6 @@ if __name__ == "__main__":
     test_laplace()
     test_plot_negative_stretches(close_figs=True)
     test_plot_title_kwargs(close_figs=True)
+    test_volumetric_strain_energy()
+    test_nh_volumetric()
+    test_nearly_incompressible_volumetric()

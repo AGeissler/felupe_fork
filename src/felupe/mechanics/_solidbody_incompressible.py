@@ -6,6 +6,9 @@ import numpy as np
 
 from ..assembly import IntegralForm
 from ..constitution import AreaChange
+from ..constitution.hyperelasticity._volumetric_strain_energy import (
+    _volumetric_strain_energy,
+)
 from ..field import FieldAxisymmetric
 from ..math import ddot, dya
 from ._helpers import (
@@ -40,15 +43,25 @@ class SolidBodyNearlyIncompressible(Solid):
         holds the array of internal state variables.
     field : FieldContainer
         A field container with one or more fields.
-    bulk : float
-        The bulk modulus of the volumetric part of the strain energy function
-        :math:`U(\bar{J})=K(\bar{J}-1)^2/2`.
+    bulk : float or None, optional
+        The bulk modulus :math:`K` of the volumetric part of the strain energy density
+        function :math:`U(\bar{J})`, which is required if ``volumetric`` is a kind. It
+        must be None if ``volumetric`` is an instance, which holds its own parameters.
+        Default is None.
     state : StateNearlyIncompressible or None, optional
         A valid initial state for a (nearly) incompressible solid (default is None).
     statevars : ndarray or None, optional
         Array of initial internal state variables (default is None).
     density : float or None, optional
         The density of the solid body.
+    volumetric : str or VolumetricStrainEnergy, optional
+        The volumetric part of the strain energy density function :math:`U(\bar{J})`,
+        given by a kind with the bulk modulus, ``"volume-ratio"`` for
+        :math:`U(\bar{J})=K(\bar{J}-1)^2/2`, ``"stretch"`` for
+        :math:`U(\bar{J})=9K(\bar{J}^{1/3}-1)^2/2` or ``"log"`` for
+        :math:`U(\bar{J})=K\ln(\bar{J})^2/2`, or by an instance of
+        :class:`~felupe.VolumetricStrainEnergy`, e.g. of a custom subclass. Default is
+        ``"volume-ratio"``.
 
     Notes
     -----
@@ -71,7 +84,11 @@ class SolidBodyNearlyIncompressible(Solid):
             \int_V U(\bar{J})\ dV +
             \int_V p (J - \bar{J})\ dV
 
-    with its variations, see Eq. :eq:`nearlyinc-variations`
+    with the volumetric part of the strain energy density function :math:`U(\bar{J})`,
+    see :class:`~felupe.VolumetricStrainEnergy`. Its first and second derivatives
+    w.r.t. the volume ratio are abbreviated by :math:`\bar{U}'=U'(\bar{J})` and
+    :math:`\bar{U}''=U''(\bar{J})`. The variations of the total potential energy are
+    given in Eq. :eq:`nearlyinc-variations`
 
     ..  math::
         :label: nearlyinc-variations
@@ -87,7 +104,7 @@ class SolidBodyNearlyIncompressible(Solid):
         \longrightarrow r_p
 
         \delta_\bar{J}(\Pi_{int}) &=
-            \int_V \left( K \left( \bar{J} - 1 \right) - p \right)\ \delta \bar{J}\ dV
+            \int_V \left( \bar{U}' - p \right)\ \delta \bar{J}\ dV
         \longrightarrow r_{\bar{J}}
 
     and linearizations, see Eq. :eq:`nearlyinc-linearizations` [1]_ [2]_ [3]_. The
@@ -117,8 +134,8 @@ class SolidBodyNearlyIncompressible(Solid):
         \longrightarrow -V
 
         \delta_{\bar{J}}\Delta_{\bar{J}}(\Pi_{int}) &=
-            \int_V \delta \bar{J}\ K\ \Delta \bar{J}\ dV
-        \longrightarrow K\ V
+            \int_V \delta \bar{J}\ \bar{U}''\ \Delta \bar{J}\ dV
+        \longrightarrow \bar{U}''\ V
 
     The assembled constraint equations for the variations w.r.t. the dual fields
     :math:`p` and :math:`\bar{J}` are given in Eq. :eq:`nearlyinc-constraints`.
@@ -128,20 +145,15 @@ class SolidBodyNearlyIncompressible(Solid):
 
         r_p &= \left( \frac{v}{V} - \bar{J} \right) V
 
-        r_{\bar{J}} &= \left( K (\bar{J} - 1) - p \right) V
+        r_{\bar{J}} &= \left( \bar{U}' - p \right) V
 
 
-    The volumetric part of the strain energy density function is denoted in Eq.
-    :eq:`nearlyincompressible-volumetric` along with its first and second derivatives.
-
-    ..  math::
-        :label: nearlyincompressible-volumetric
-
-        \bar{U} &= \frac{K}{2} \left( \bar{J} - 1 \right)^2
-
-        \bar{U}' &= K \left( \bar{J} - 1 \right)
-
-        \bar{U}'' &= K
+    The volumetric part of the strain energy density function is given by
+    ``volumetric``, see :class:`~felupe.VolumetricStrainEnergy` for the kinds
+    ``"volume-ratio"`` (default), ``"stretch"`` and ``"log"`` and for a custom
+    volumetric part. The undeformed configuration is free of stress only if
+    :math:`U'(1)=0`, and a positive second derivative :math:`U''(\bar{J})>0` is
+    required for a stable volumetric response.
 
 
     **Hu-Washizu Three-Field-Variational Principle**
@@ -161,7 +173,7 @@ class SolidBodyNearlyIncompressible(Solid):
             \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
                 & \boldsymbol{K}_{\boldsymbol{u}p} & \boldsymbol{0} \\
             \boldsymbol{K}_{\boldsymbol{u}p}^T & 0 & -V \\
-            \boldsymbol{0}^T & -V  & K\ V
+            \boldsymbol{0}^T & -V  & \bar{U}''\ V
         \end{bmatrix} \cdot \begin{bmatrix}
             \delta \boldsymbol{u} \\
             \delta p \\
@@ -179,7 +191,8 @@ class SolidBodyNearlyIncompressible(Solid):
 
     A condensed representation of the equation system, only dependent on the primary
     unknowns :math:`\boldsymbol{u}` is carried out. To do so, the second line is
-    multiplied by the bulk modulus :math:`K`, see Eq. :eq:`nearlyinc-condensed`.
+    multiplied by the second derivative :math:`\bar{U}''`, see Eq.
+    :eq:`nearlyinc-condensed`.
 
     ..  math::
         :label: nearlyinc-condensed
@@ -187,15 +200,15 @@ class SolidBodyNearlyIncompressible(Solid):
         \begin{bmatrix}
             \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
                 & \boldsymbol{K}_{\boldsymbol{u}p} & \boldsymbol{0} \\
-            K \boldsymbol{K}_{\boldsymbol{u}p}^T & 0 & -K\ V \\
-            \boldsymbol{0}^T & -V  & K\ V
+            \bar{U}'' \boldsymbol{K}_{\boldsymbol{u}p}^T & 0 & -\bar{U}''\ V \\
+            \boldsymbol{0}^T & -V  & \bar{U}''\ V
         \end{bmatrix} \cdot \begin{bmatrix}
             \delta \boldsymbol{u} \\
             \delta p \\
             \delta \bar{J}
         \end{bmatrix} + \begin{bmatrix}
             \boldsymbol{r}_\boldsymbol{u} \\
-            K\ r_p \\
+            \bar{U}''\ r_p \\
             r_\bar{J}
         \end{bmatrix} =
         \begin{bmatrix}
@@ -213,13 +226,13 @@ class SolidBodyNearlyIncompressible(Solid):
         \begin{bmatrix}
             \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
                 & \boldsymbol{K}_{\boldsymbol{u}p} \\
-            K \boldsymbol{K}_{\boldsymbol{u}p}^T & -V
+            \bar{U}'' \boldsymbol{K}_{\boldsymbol{u}p}^T & -V
         \end{bmatrix} \cdot \begin{bmatrix}
             \delta \boldsymbol{u} \\
             \delta p
         \end{bmatrix} + \begin{bmatrix}
             \boldsymbol{r}_\boldsymbol{u} \\
-            K\ r_p + r_\bar{J}
+            \bar{U}''\ r_p + r_\bar{J}
         \end{bmatrix} =
         \begin{bmatrix}
             \boldsymbol{0}\\
@@ -235,10 +248,10 @@ class SolidBodyNearlyIncompressible(Solid):
 
         \left(
             \boldsymbol{K}_{\boldsymbol{u}\boldsymbol{u}}
-                + \frac{K}{V}~\boldsymbol{K}_{\boldsymbol{u}p} \otimes
+                + \frac{\bar{U}''}{V}~\boldsymbol{K}_{\boldsymbol{u}p} \otimes
                     \boldsymbol{K}_{\boldsymbol{u}p}
         \right) \cdot \delta \boldsymbol{u} +
-        \boldsymbol{r}_\boldsymbol{u} + \frac{K~r_p + r_\bar{J}}{V}
+        \boldsymbol{r}_\boldsymbol{u} + \frac{\bar{U}''~r_p + r_\bar{J}}{V}
             \boldsymbol{K}_{\boldsymbol{u}p} = \boldsymbol{0}
 
     The secondary unknowns are evaluated after solving the primary unknowns, see
@@ -250,7 +263,7 @@ class SolidBodyNearlyIncompressible(Solid):
         \delta \bar{J} &= \frac{1}{V} \delta \boldsymbol{u} \cdot
             \boldsymbol{K}_{\boldsymbol{u}p} + \frac{v}{V} - \bar{J}
 
-        \delta p &= K \left(\bar{J} + \delta \bar{J} - 1 \right) - p
+        \delta p &= \bar{U}' + \bar{U}''\ \delta \bar{J} - p
 
     The condensed constraint equation in Eq. :eq:`nearlyinc-contracted-sum-final` is
     given in Eq. :eq:`nearlyinc-constraint`
@@ -258,7 +271,8 @@ class SolidBodyNearlyIncompressible(Solid):
     ..  math::
         :label: nearlyinc-constraint
 
-        \frac{K~r_p + r_{\bar{J}}}{V} = K \left( \frac{v}{V} - 1 \right) - p
+        \frac{\bar{U}''~r_p + r_{\bar{J}}}{V} =
+            \bar{U}' + \bar{U}'' \left( \frac{v}{V} - \bar{J} \right) - p
 
     and the deformed volume is evaluated by Eq. :eq:`nearlyinc-deformed-volume`.
 
@@ -266,6 +280,21 @@ class SolidBodyNearlyIncompressible(Solid):
         :label: nearlyinc-deformed-volume
 
         v = \int_V J\ dV
+
+    The terms :math:`\bar{U}' + \bar{U}''\ (\dots)` in Eq. :eq:`nearlyinc-final` and
+    Eq. :eq:`nearlyinc-constraint` are the linearizations of
+    :math:`U'(\bar{J} + \delta \bar{J})` and :math:`U'(v/V)`. Instead, their exact
+    values are used, i.e. the pressure is updated by :math:`p = U'(\bar{J})` and the
+    condensed constraint is evaluated by :math:`U'(v/V) - p`. Both are identical for
+    ``volumetric="volume-ratio"``. Hence, the assembled vector is the gradient of
+    the total potential energy of internal forces of the mean dilatation technique,
+    see Eq. :eq:`nearlyinc-mean-dilatation`, where the sum is taken over the cells.
+
+    ..  math::
+        :label: nearlyinc-mean-dilatation
+
+        \Pi_{int}(\boldsymbol{u}) = \int_V \hat{\psi}(\boldsymbol{F})\ dV +
+            \sum V\ U\left( \frac{v}{V} \right)
 
 
     Examples
@@ -316,11 +345,29 @@ class SolidBodyNearlyIncompressible(Solid):
         for (nearly) incompressible solid bodies.
     """
 
-    def __init__(self, umat, field, bulk, state=None, statevars=None, density=None):
+    def __init__(
+        self,
+        umat,
+        field,
+        bulk=None,
+        state=None,
+        statevars=None,
+        density=None,
+        volumetric="volume-ratio",
+    ):
         self.umat = umat
         self.field = field
         self.bulk = bulk
         self.density = density
+
+        # volumetric part of the strain energy density function U(J), given by a kind
+        # (with the bulk modulus) or by an instance
+        self._volumetric = volumetric
+
+        if _volumetric_strain_energy(volumetric, bulk) is None:
+            raise ValueError(
+                f'volumetric="{volumetric}" requires the bulk modulus, e.g. bulk=5000.'
+            )
 
         self._area_change = AreaChange()
         self._form = IntegralForm
@@ -368,6 +415,14 @@ class SolidBodyNearlyIncompressible(Solid):
             cauchy_stress=self._cauchy_stress,
             kirchhoff_stress=self._kirchhoff_stress,
         )
+
+    @property
+    def volumetric(self):
+        """The volumetric part of the strain energy density function, see
+        :class:`~felupe.VolumetricStrainEnergy`. For a kind, it is created with the
+        current bulk modulus.
+        """
+        return _volumetric_strain_energy(self._volumetric, self.bulk)
 
     def checkpoint(self):
         """Return a checkpoint of the nearly-incompressible solid body.
@@ -449,7 +504,7 @@ class SolidBodyNearlyIncompressible(Solid):
             Flag to restore the internal fields, i.e. the pressure :math:`p` and the
             volume ratio :math:`\bar{J}`, of the checkpoint. If False, the internal
             fields are re-initialized by the deformation of the restored field,
-            :math:`\bar{J} = v / V` and :math:`p = K (\bar{J} - 1)`. Default is True.
+            :math:`\bar{J} = v / V` and :math:`p = U'(\bar{J})`. Default is True.
 
         Notes
         -----
@@ -480,7 +535,7 @@ class SolidBodyNearlyIncompressible(Solid):
         else:
             state.u[:] = self.field[0].values
             state.J[:] = state.volume() / self.V
-            state.p[:] = self.bulk * (state.J - 1)
+            state.p[:] = self.volumetric.dUdJ(state.J)
 
         if restore_statevars:
             self.results.statevars[:] = checkpoint["results.statevars"]
@@ -531,6 +586,7 @@ class SolidBodyNearlyIncompressible(Solid):
             field=new_field,
             density=self.density,
             bulk=self.bulk,
+            volumetric=self._volumetric,
         )
 
         # expand state variables (no rotation is applied here)
@@ -579,7 +635,7 @@ class SolidBodyNearlyIncompressible(Solid):
         v = self.results.state.volume()
         p = self.results.state.p
 
-        constraint = np.multiply(h, self.bulk * (v / self.V - 1) - p, out=h)
+        constraint = np.multiply(h, self.volumetric.dUdJ(v / self.V) - p, out=h)
 
         self.results.force_values = form.integrate(
             parallel=parallel, out=self.results.force_values
@@ -615,7 +671,7 @@ class SolidBodyNearlyIncompressible(Solid):
             parallel=parallel, out=self.results._force_values
         )
         H = dya(h, h, out=self.results._stiffness_values)
-        bulk_H = np.multiply(H, self.bulk, out=H)
+        bulk_H = np.multiply(H, self.volumetric.d2UdJdJ(self.results.state.J), out=H)
         constraint = np.divide(bulk_H, self.V, out=bulk_H)
 
         self.results.stiffness_values = form.integrate(
@@ -650,7 +706,7 @@ class SolidBodyNearlyIncompressible(Solid):
 
         # update state variables
         self.results.state.J[:] = (ddot(du, h, mode=(2, 2)) + v) / self.V
-        self.results.state.p[:] = self.bulk * (self.results.state.J - 1)
+        self.results.state.p[:] = self.volumetric.dUdJ(self.results.state.J)
         self.results.state.u[:] = u
 
         return self.results.kinematics
