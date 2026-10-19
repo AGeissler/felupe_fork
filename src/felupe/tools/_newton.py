@@ -5,7 +5,6 @@ from copy import deepcopy
 
 import numpy as np
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
 
 from .. import solve as fesolve
 from ..assembly import IntegralForm
@@ -57,7 +56,11 @@ class IterationState:
     success : bool or None, optional
         A flag if the current iteration has converged (default is None).
     tol : float or None, optional
-        The tolerance of the Newton-Raphson method (default is None).
+        The tolerance of the Newton-Raphson method (default is None). If no tolerance
+        is given to :func:`~felupe.newtonraphson`, the default tolerance depends on the
+        data types of the linear equation system and of the unknowns. It is set after
+        the assembly of the Jacobian in the first iteration, i.e. it is None in the
+        hooks ``before_newton`` and ``before_iteration`` of the first iteration.
     error : bool or None, optional
         A flag if an error occured in the current iteration (default is None).
     x : felupe.FieldContainer or ndarray or None, optional
@@ -379,7 +382,7 @@ def jac(x, umat, parallel=False, grad=True, add_identity=True, sym=False):
     ).assemble(parallel=parallel)
 
 
-def solve(A, b, x, dof1, dof0, offsets=None, ext0=None, solver=spsolve):
+def solve(A, b, x, dof1, dof0, offsets=None, ext0=None, solver=fesolve.SuperLUSolver()):
     "Solve partitioned system."
 
     system = fesolve.partition(x, A, dof1, dof0, -b)
@@ -413,6 +416,44 @@ def check(dx, x, f, xtol, ftol, dof1=None, dof0=None, items=None, eps=1e-3):
     success = fnorm < ftol and xnorm < xtol
 
     return xnorm, fnorm, success
+
+
+def _dtype(a):
+    "Return the data type of an array-like object."
+    dtype = getattr(a, "dtype", None)
+    return np.asarray(a).dtype if dtype is None else dtype
+
+
+def default_tol(A, b, x=None):
+    r"""Return the default tolerance of the Newton-Raphson method for a linear equation
+    system with the Jacobian ``A``, the objective function ``b`` and the unknowns
+    ``x``.
+
+    The tolerance is the square root of the machine epsilon of the lowest precision of
+    the linear equation system and of the unknowns, e.g. ``1.490e-8`` for ``float64``
+    and ``3.453e-4`` if the linear equation system or the unknowns are ``float32``. The
+    precision of the linear equation system is given by the common data type of ``A``
+    and ``b``. Data types without a machine epsilon, e.g. integers, use the tolerance
+    of ``float64``. The precision of the unknowns is given by the data types of the
+    values of all fields of a field container or by the data type of an array. Data
+    types of the unknowns without a machine epsilon are ignored.
+    """
+
+    system = np.result_type(_dtype(A), _dtype(b))
+
+    if not np.issubdtype(system, np.inexact):
+        system = np.dtype(float)
+
+    dtypes = [system]
+
+    if x is not None:
+        fields = getattr(x, "fields", None)
+        values = [x] if fields is None else [field.values for field in fields]
+        dtypes += [t for t in map(_dtype, values) if np.issubdtype(t, np.inexact)]
+
+    eps = max(np.finfo(dtype).eps for dtype in dtypes)
+
+    return float(np.sqrt(eps))
 
 
 def update_statevars(items):
@@ -451,12 +492,12 @@ def newtonraphson(
     check=check,
     args=(),
     kwargs=None,
-    tol=np.sqrt(np.finfo(float).eps),
+    tol=None,
     items=None,
     dof1=None,
     dof0=None,
     ext0=None,
-    solver=spsolve,
+    solver=fesolve.SuperLUSolver(),
     verbose=None,
     tqdm="tqdm",
     dispatcher=None,
@@ -491,8 +532,18 @@ def newtonraphson(
         ``xnorm, fnorm, success = check(dx, x, f, xtol, ftol, dof1, dof0, items)``.
         The state variables of the items are updated by the Newton-Raphson method after
         a converged iteration, i.e. a custom ``check`` doesn't update them.
-    tol : float, optional
-        Tolerance value to check if the function has converged (default is 1.490e-8).
+    tol : float or None, optional
+        Tolerance value to check if the function has converged. If None, the tolerance
+        is the square root of the machine epsilon of the lowest precision of the linear
+        equation system (the common data type of the Jacobian and the objective
+        function) and of the unknowns, e.g. ``1.490e-8`` for ``float64`` and
+        ``3.453e-4`` if the linear equation system or the unknowns are ``float32``, see
+        the notes below. Default is None.
+
+        ..  versionchanged:: 12.0.0
+            The default tolerance depends on the data types of the linear equation
+            system and of the unknowns. Before, it was ``1.490e-8`` for all data types.
+
     items : list or None, optional
         List with items which provide methods for assembly, e.g. like
         :class:`felupe.SolidBody` (default is None). See
@@ -505,8 +556,9 @@ def newtonraphson(
         Field values at mesh-points for the prescribed components of the unknowns based
         on ``dof0`` (default is None).
     solver : callable, optional
-        A sparse or dense solver (default is :func:`scipy.sparse.linalg.spsolve`). For a
-        more performant alternative install PyPardiso and use :func:`pypardiso.spsolve`.
+        A sparse or dense solver with the signature ``x = solver(A, b)`` (default is
+        :class:`~felupe.solve.SuperLUSolver`). For a more performant alternative install
+        PyPardiso and use :func:`pypardiso.spsolve`.
     verbose : bool or int or None, optional
         Verbosity level to control how messages are printed during evaluation. If
         1 or True and ``tqdm`` is installed, a progress bar is shown. If ``tqdm`` is
@@ -600,7 +652,37 @@ def newtonraphson(
          x &= x_n + dx
 
     Then, the nonlinear equilibrium equations are evaluated with the updated unknowns
-    :math:`f(x)`. The procedure is repeated until convergence is reached.
+    :math:`f(x)`. The procedure is repeated until convergence is reached, i.e. until the
+    norm of the objective function is lower than the tolerance.
+
+    The attainable norm of the objective function is limited by the precision of its
+    data type and by the precision of the unknowns. An increment which is smaller than
+    the spacing of the values of the unknowns is lost by the update, e.g. of fields in
+    single-precision (``float32``) on a region in double-precision (``float64``). Even
+    the exact solution, rounded to the precision of the unknowns, does not fulfil the
+    equilibrium equations within the precision of the objective function. Hence, the
+    default tolerance is the square root of the machine epsilon :math:`\varepsilon` of
+    the lowest precision of the linear equation system and of the unknowns, see Eq.
+    :eq:`newton-tol`. The precision of the linear equation system is given by the
+    common data type of the Jacobian :math:`K(x_n)` and of the objective function
+    :math:`f(x_n)`. The precision of the unknowns is given by the data types of the
+    values of all fields of a field container or by the data type of an array. The
+    default tolerance is evaluated after the assembly of the Jacobian in the first
+    iteration.
+
+    ..  math::
+        :label: newton-tol
+
+        \text{tol} = \sqrt{\varepsilon}
+
+    This is approximately ``1.490e-8`` for double-precision (``float64``) and
+    ``3.453e-4`` for single-precision (``float32``), e.g. of fields cast to ``float32``
+    on a region in ``float32`` or ``float64``. The data type of the solution of the
+    linear equation system is not considered, i.e. a linear solver in single-precision
+    for an equation system and unknowns in double-precision uses the tolerance of
+    double-precision. A lower precision within the evaluation of the objective
+    function, e.g. of a constitutive material in single-precision for unknowns and a
+    region in double-precision, is not detected.
 
     Plugins may modify the update of the unknowns in the ``after_linear_solve`` hook,
     see :class:`~felupe.tools.IterationState`. E.g., a backtracking line search
@@ -756,6 +838,12 @@ def newtonraphson(
             K = jac(x, *args, **kwargs)
 
         state.jac = K
+
+        if tol is None:
+            # the default tolerance depends on the data types of the linear equation
+            # system, which are known after the assembly of the Jacobian, and of the
+            # unknowns
+            tol = state.tol = default_tol(K, f, x)
 
         # create keyword-arguments for solving the linear system
         keys = ["x", "dof1", "dof0", "ext0", "solver"]
