@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+from ..view._backends import backend_of, take_screenshot
+
 
 class BoundaryDict(dict):
     "A dict of boundary conditions."
@@ -46,7 +48,8 @@ class BoundaryDict(dict):
                 **kwargs,
             )
 
-        plotter.add_legend(size=size, bcolor="white")
+        backend = backend_of(plotter)
+        plotter = backend.add_legend(plotter, size=size, background_color="white")
 
         return plotter
 
@@ -62,16 +65,21 @@ class BoundaryDict(dict):
     ):
         "Take a screenshot of the boundary conditions."
 
-        if plotter is None:
-            mesh = self[list(self.keys())[0]].field.region.mesh
-            plotter = mesh.plot(off_screen=True)
+        def plot(*args, plotter=None, off_screen=False, **kwargs):
+            if plotter is None:
+                mesh = self[list(self.keys())[0]].field.region.mesh
+                plotter = mesh.plot(off_screen=off_screen)
 
-        plotter = self.plot(plotter=plotter, colors=colors, **kwargs)
+            return self.plot(plotter=plotter, colors=colors, **kwargs)
 
-        return plotter.screenshot(
+        return take_screenshot(
+            plot,
+            *args,
             filename=filename,
             transparent_background=transparent_background,
             scale=scale,
+            plotter=plotter,
+            **kwargs,
         )
 
     def imshow(self, *args, ax=None, dpi=None, **kwargs):

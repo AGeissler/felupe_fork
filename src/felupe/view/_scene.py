@@ -1,21 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import numpy as np
-
-
-def _default_view(plotter, points):
-    """Prepare the default view of the camera and return the camera position. Planar
-    meshes are viewed from the top ("xy") with a parallel projection. For all other
-    meshes, the camera is rotated (the camera position is None)."""
-
-    if np.allclose(points[:, 2], 0):
-        plotter.enable_parallel_projection()
-        return "xy"
-
-    plotter.camera.elevation = -15
-    plotter.camera.azimuth = -100
-
-    return None
+from ._backends import backend_of
 
 
 class Scene:
@@ -79,6 +64,11 @@ class Scene:
     ):
         """Plot scalars, selected by name and component.
 
+        The scene is drawn by the plotting backend of a given plotter or, without a
+        given plotter, by the current plotting backend (default is ``"pyvista"``), see
+        :func:`~felupe.set_plotting_backend`. The arguments are those of the plotting
+        backend of PyVista.
+
         Parameters
         ----------
         name: str or None, optional
@@ -116,6 +106,8 @@ class Scene:
             screenshots, it is necessary to set ``off_screen=True`` (default is False).
         plotter : pyvista.Plotter or None, optional
             Use a given Plotter instead of creating a new instance (default is None).
+            A given plotter of another plotting backend is drawn by its plotting
+            backend.
         notebook : bool, optional
             When True, the resulting plot is placed inline a jupyter notebook. Assumes a
             jupyter console is active. Automatically enables off_screen (default is
@@ -148,176 +140,41 @@ class Scene:
         Returns
         -------
         plotter : pyvista.Plotter
-            A Plotter object with methods ``plot()``, ``screenshot()``, etc.
+            A Plotter object with methods ``plot()``, ``screenshot()``, etc. Another
+            plotting backend returns its own plotter.
 
         See Also
         --------
         pyvista.Plotter : Plotting object to display vtk meshes or numpy arrays.
+        felupe.set_plotting_backend : Set the current plotting backend by its name.
         """
 
-        import pyvista as pv
+        backend = backend_of(plotter)
 
-        if theme is not None:
-            pv.set_plot_theme(theme)
-
-        if plotter is None:
-            plotter_kwargs = dict()
-            if off_screen:
-                plotter_kwargs["off_screen"] = off_screen
-            if notebook:
-                plotter_kwargs["notebook"] = notebook
-            plotter = pv.Plotter(**plotter_kwargs)
-
-        if show_logo:
-            from importlib.resources import as_file, files
-
-            with as_file(files("felupe.view") / "logo.png") as logo_path:
-                plotter.add_logo_widget(
-                    logo=logo_path,
-                    position=(0.75, 0.85),
-                    size=(0.2, 0.2),
-                )
-
-        if scalar_bar_args is None:
-            scalar_bar_args = {}
-
-        if name is not None:
-            if component is not None:
-                if name in self.mesh.point_data.keys():
-                    data = self.mesh.point_data[name]
-                else:
-                    data = self.mesh.cell_data[name]
-
-        if name is not None and label is None:
-            data_label = name
-
-            if component is not None:
-                if name in self.mesh.point_data.keys():
-                    data = self.mesh.point_data[name]
-                else:
-                    data = self.mesh.cell_data[name]
-
-                dim = 1
-
-                if len(data.shape) == 2:
-                    dim = data.shape[1]
-
-                component_labels_dict = {
-                    1: [""],
-                    2: ["X", "Y"],
-                    3: ["X", "Y", "Z"],
-                    6: ["XX", "YY", "ZZ", "XY", "YZ", "XZ"],
-                    9: [
-                        "XX",
-                        "XY",
-                        "XZ",
-                        "YX",
-                        "YY",
-                        "YZ",
-                        "ZX",
-                        "ZY",
-                        "ZZ",
-                    ],
-                }
-
-                if "Principal Values of " in data_label:
-                    data[:] = np.flip(np.sort(data, axis=-1), axis=-1)
-                    component_labels_dict[2] = [
-                        "(Max. Principal)",
-                        "(Min. Principal)",
-                    ]
-                    component_labels_dict[3] = [
-                        "(Max. Principal)",
-                        "(Int. Principal)",
-                        "(Min. Principal)",
-                    ]
-                    data_label = data_label[20:]
-
-                if "Equivalent of " in data_label:
-                    component_labels_dict[1] = [""]
-
-                component_labels = np.arange(dim)
-                if dim in component_labels_dict.keys():
-                    component_labels = component_labels_dict[dim]
-
-                component_label = component_labels[component]
-
-            else:
-                component_label = "Magnitude"
-
-            label = f"{data_label} {component_label}"
-
-        if show_undeformed:
-            plotter.add_mesh(
-                self.mesh, show_edges=False, opacity=0.2, line_width=line_width
-            )
-
-        mesh = self.mesh
-        if "Displacement" in self.mesh.point_data.keys():
-            mesh = mesh.warp_by_vector("Displacement", factor=factor)
-
-        surface = mesh
-        show_edges_surface = show_edges
-        kwargs_with_line_width = {**kwargs}
-
-        if mesh.number_of_cells > 0:
-            if extract_surface or nonlinear_subdivision > 1:
-                surface = surface.extract_surface(
-                    algorithm=None,
-                    nonlinear_subdivision=nonlinear_subdivision,
-                )
-                show_edges_surface = False
-            else:
-                kwargs_with_line_width["line_width"] = line_width
-
-        # disable surface-related arguments if the mesh contains no cells
-        if mesh.number_of_cells == 0 or nonlinear_subdivision == 1:
-            smooth_shading = None
-            split_sharp_edges = None
-
-        # don't show edges for the base (surface) mesh to hide internal edges of
-        # quadratic / Lagrange cell-types
-        plotter.add_mesh(
-            mesh=surface,
-            scalars=name,
-            component=component,
-            show_edges=show_edges_surface,
-            cmap=cmap,
-            scalar_bar_args={
-                "title": label,
-                "interactive": True,
-                "vertical": scalar_bar_vertical,
-                **scalar_bar_args,
-            },
-            smooth_shading=smooth_shading,
-            split_sharp_edges=split_sharp_edges,
-            **kwargs_with_line_width,
+        plotter = backend.prepare_plotter(
+            plotter=plotter, theme=theme, off_screen=off_screen, notebook=notebook
         )
 
-        # extract the feature edges (without cell-internal edges)
-        if (
-            mesh.number_of_cells > 0
-            and show_edges
-            and (extract_surface or nonlinear_subdivision > 1)
-        ):
-            edges = (
-                mesh.separate_cells()
-                .extract_surface(
-                    algorithm=None,
-                    nonlinear_subdivision=nonlinear_subdivision,
-                )
-                .extract_feature_edges()
-            )
-            actor = plotter.add_mesh(edges, color=edge_color, line_width=line_width)
-            actor.mapper.SetResolveCoincidentTopologyToPolygonOffset()
-
-        if view == "default":
-            view = _default_view(plotter, self.mesh.points)
-
-        plotter.camera_position = view
-        # pv.set_plot_theme(theme)
-
-        if add_axes:
-            plotter.add_axes()
-
-        return plotter
+        return backend.add_view(
+            plotter,
+            self,
+            name=name,
+            component=component,
+            label=label,
+            factor=factor,
+            show_edges=show_edges,
+            show_undeformed=show_undeformed,
+            cmap=cmap,
+            view=view,
+            scalar_bar_args=scalar_bar_args,
+            scalar_bar_vertical=scalar_bar_vertical,
+            add_axes=add_axes,
+            extract_surface=extract_surface,
+            nonlinear_subdivision=nonlinear_subdivision,
+            smooth_shading=smooth_shading,
+            split_sharp_edges=split_sharp_edges,
+            edge_color=edge_color,
+            line_width=line_width,
+            show_logo=show_logo,
+            **kwargs,
+        )

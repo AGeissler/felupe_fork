@@ -4,10 +4,29 @@ from copy import deepcopy
 
 import numpy as np
 
+from ..view._backends import backend_of, take_screenshot
 from ._convert import cell_types
 from ._mesh import Mesh
 from ._tools import merge_duplicate_points as sweep
 from ._tools import stack
+
+
+def _default_colors(backend, xkcd=False):
+    """Return the default colors of the meshes of a container: the default color of the
+    plotting backend (e.g. of the theme of PyVista) for the first mesh and the Tableau
+    colors (optionally followed by the XKCD colors) for the other meshes."""
+
+    import matplotlib.colors as mcolors
+
+    tableau = list(mcolors.TABLEAU_COLORS.values())
+    default = backend.default_color()
+
+    colors = [tableau[0] if default is None else default, *tableau[1:]]
+
+    if xkcd:
+        colors += list(mcolors.XKCD_COLORS.values())
+
+    return colors
 
 
 class MeshContainer:
@@ -290,12 +309,7 @@ class MeshContainer:
         """
 
         if colors is None:
-            import matplotlib.colors as mcolors
-            import pyvista
-
-            colors = [pyvista.global_theme.color]
-            colors += list(mcolors.TABLEAU_COLORS.values())[1:]
-            colors += list(mcolors.XKCD_COLORS.values())
+            colors = _default_colors(backend_of(plotter), xkcd=True)
 
         if add_legend is None:
             if labels is None:
@@ -317,12 +331,8 @@ class MeshContainer:
             )
 
         if add_legend:
-            plotter.add_legend(
-                [
-                    (f"  {label}", color, "rectangle")
-                    for label, color in zip(labels, colors)
-                ],
-            )
+            entries = [(f"  {label}", color) for label, color in zip(labels, colors)]
+            plotter = backend_of(plotter).add_legend(plotter, entries)
 
         return plotter
 
@@ -343,30 +353,30 @@ class MeshContainer:
         pyvista.Plotter.screenshot: Take a screenshot of a PyVista plotter.
         """
 
-        if colors is None:
-            import matplotlib.colors as mcolors
-            import pyvista
+        def plot(*args, plotter=None, **kwargs):
+            mesh_colors = colors
 
-            colors = [
-                pyvista.global_theme.color,
-                *list(mcolors.TABLEAU_COLORS.values())[1:],
-            ]
+            if mesh_colors is None:
+                mesh_colors = _default_colors(backend_of(plotter))
 
-        plotter = None
-        for mesh, color in zip(self.meshes, colors):
-            plotter = mesh.plot(
-                *args,
-                off_screen=True,
-                color=color,
-                plotter=plotter,
-                opacity=opacity,
-                **kwargs,
-            )
+            for mesh, color in zip(self.meshes, mesh_colors):
+                plotter = mesh.plot(
+                    *args,
+                    color=color,
+                    plotter=plotter,
+                    opacity=opacity,
+                    **kwargs,
+                )
 
-        return plotter.screenshot(
+            return plotter
+
+        return take_screenshot(
+            plot,
+            *args,
             filename=filename,
             transparent_background=transparent_background,
             scale=scale,
+            **kwargs,
         )
 
     def imshow(self, *args, ax=None, dpi=None, **kwargs):
