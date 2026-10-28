@@ -118,6 +118,50 @@ class ConstitutiveMaterial:
 
                 return [d2WdFdF, d2WdFdp, d2Wdpdp]
 
+    A time-dependent constitutive material, e.g. a viscoelastic material, takes the
+    time increment :math:`\Delta t` as an input, like the deformation gradient. It is
+    marked by the attribute ``time_dependent`` (default is False). Then, the time
+    increment is a required keyword-argument ``dtime`` of :meth:`gradient` and
+    :meth:`hessian`, e.g. ``umat.gradient(x, dtime=0.1)``, which is passed to
+    ``_gradient(x, dtime)`` and ``_hessian(x, dtime)``, i.e. it is the same for all
+    chunks of cells. A material which is not time-dependent does not take a time
+    increment.
+
+    ..  code-block::
+
+        class MyViscousMaterialFormulation(fem.ConstitutiveMaterial):
+
+            time_dependent = True
+
+            def __init__(self):
+                self.x = [np.zeros((3, 3))]
+
+            def _gradient(self, x, dtime):
+                "Gradients of the strain energy density function of a chunk of cells."
+
+                F, statevars = x[0], x[-1]
+                ...
+
+                return [dWdF, statevars_new]
+
+            def _hessian(self, x, dtime):
+                "Hessians of the strain energy density function of a chunk of cells."
+
+                F, statevars = x[0], x[-1]
+                ...
+
+                return [d2WdFdF]
+
+    The same interface applies to material definitions which are not derived from
+    :class:`~felupe.ConstitutiveMaterial`, e.g. of external packages: a material is
+    time-dependent if it has an attribute ``time_dependent`` which is True. Then, its
+    methods ``gradient(x, dtime)`` and ``hessian(x, dtime)`` take the time increment as
+    keyword-argument ``dtime``. Without this attribute, a material is not time-dependent
+    and the time increment is not passed to it, e.g. by the materials
+    :class:`~felupe.NearlyIncompressible`, :class:`~felupe.ThreeFieldVariation` and
+    :class:`~felupe.ThirdMediumContactMixed`, which take the time-dependency from their
+    material, or by a composite material ``umat & other_umat``.
+
     See Also
     --------
     felupe.constitutive_material : A decorator for a constitutive material definition.
@@ -125,6 +169,33 @@ class ConstitutiveMaterial:
 
     chunksize = CHUNKSIZE_POINTS
     parallel = False
+    time_dependent = False
+
+    def _check_time_increment(self, kwargs):
+        """Check the time increment ``dtime`` of the keyword-arguments of
+        :meth:`gradient` and :meth:`hessian`. A time-dependent material requires a time
+        increment, a material which is not time-dependent does not take one."""
+
+        if self.time_dependent:
+            if kwargs.get("dtime") is None:
+                raise ValueError(
+                    f"The material {type(self).__name__} is time-dependent and requires "
+                    "the time increment, e.g. `umat.gradient(x, dtime=0.1)`."
+                )
+
+        elif "dtime" in kwargs:
+            message = (
+                f"The material {type(self).__name__} is not time-dependent and does "
+                "not take the time increment `dtime`."
+            )
+
+            if "dtime" in getattr(self, "kwargs", {}):
+                message += (
+                    " Its material parameter `dtime` is constant, i.e. the time "
+                    "increment is not an input of the material."
+                )
+
+            raise TypeError(message)
 
     def gradient(self, x, *args, out=None, **kwargs):
         """Return the evaluated gradient(s) of the strain energy density function,
@@ -141,14 +212,26 @@ class ConstitutiveMaterial:
         out : ndarray or None, optional
             A location into which the first gradient is stored (default is None).
         **kwargs : dict, optional
-            Optional keyword-arguments for ``_gradient()``.
+            Optional keyword-arguments for ``_gradient()``, e.g. the time increment
+            ``dtime`` of a time-dependent material.
 
         Returns
         -------
         list of ndarray
             A list with the evaluated gradient(s) of the strain energy density function
             and the updated vector of state variables.
+
+        Raises
+        ------
+        ValueError
+            If the material is time-dependent and the time increment ``dtime`` is
+            missing (or None).
+        TypeError
+            If the material is not time-dependent and a time increment ``dtime`` is
+            given.
         """
+
+        self._check_time_increment(kwargs)
 
         return evaluate_chunks(
             self._gradient,
@@ -176,14 +259,26 @@ class ConstitutiveMaterial:
         out : ndarray or None, optional
             A location into which the first hessian is stored (default is None).
         **kwargs : dict, optional
-            Optional keyword-arguments for ``_hessian()``.
+            Optional keyword-arguments for ``_hessian()``, e.g. the time increment
+            ``dtime`` of a time-dependent material.
 
         Returns
         -------
         list of ndarray
             A list with the evaluated upper-triangle components of the hessian(s) of the
             strain energy density function.
+
+        Raises
+        ------
+        ValueError
+            If the material is time-dependent and the time increment ``dtime`` is
+            missing (or None).
+        TypeError
+            If the material is not time-dependent and a time increment ``dtime`` is
+            given.
         """
+
+        self._check_time_increment(kwargs)
 
         return evaluate_chunks(
             self._hessian,
@@ -712,6 +807,10 @@ class CompositeMaterial(ConstitutiveMaterial):
     The gradients and the hessians are evaluated in chunks of cells, by a pool of
     threads if any of the materials is parallel.
 
+    The composite material is time-dependent if any of the materials is time-dependent
+    (attribute ``time_dependent``). The time increment ``dtime`` is only passed to the
+    time-dependent materials, e.g. ``viscoelastic & fem.Volumetric(bulk=5000)``.
+
     ..  warning::
         Do not merge two constitutive materials with the same keys of material
         parameters. In this case, the values of these material parameters are taken from
@@ -738,14 +837,36 @@ class CompositeMaterial(ConstitutiveMaterial):
         # evaluate the chunks of cells in parallel, if any of the materials is parallel
         self.parallel = any(getattr(m, "parallel", False) for m in self.materials)
 
+    @property
+    def time_dependent(self):
+        """A flag which is True if any of the materials is time-dependent. Then, the
+        time increment ``dtime`` is passed to the time-dependent materials."""
+        return any(getattr(m, "time_dependent", False) for m in self.materials)
+
+    @staticmethod
+    def _material_kwargs(material, kwargs):
+        """Return the keyword-arguments for a material, i.e. without the time increment
+        for a material which is not time-dependent."""
+
+        if getattr(material, "time_dependent", False):
+            return kwargs
+
+        return {key: value for key, value in kwargs.items() if key != "dtime"}
+
     def _gradient(self, x, **kwargs):
-        gradients = [material.gradient(x, **kwargs) for material in self.materials]
+        gradients = [
+            material.gradient(x, **self._material_kwargs(material, kwargs))
+            for material in self.materials
+        ]
         nfields = max(1, len(x) - 1)
         P = [np.sum([grad[i] for grad in gradients], axis=0) for i in range(nfields)]
         statevars_new = gradients[0][-1]
         return [*P, statevars_new]
 
     def _hessian(self, x, **kwargs):
-        hessians = [material.hessian(x, **kwargs) for material in self.materials]
+        hessians = [
+            material.hessian(x, **self._material_kwargs(material, kwargs))
+            for material in self.materials
+        ]
         nfields = max(1, len(x) - 1)
         return [np.sum([hess[i] for hess in hessians], axis=0) for i in range(nfields)]
