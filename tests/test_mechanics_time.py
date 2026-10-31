@@ -23,7 +23,7 @@ def model(Body="solid", dtime=None):
     mesh = fem.Cube(n=3)
     region = fem.RegionHexahedron(mesh)
     field = fem.FieldContainer([fem.Field(region, dim=3)])
-    boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+    boundaries = fem.dof.uniaxial(field, clamped=True)
 
     if Body == "solid":
         umat = viscoelastic(dtime) & fem.Volumetric(bulk=20.0)
@@ -31,9 +31,6 @@ def model(Body="solid", dtime=None):
 
     elif Body == "nearly-incompressible":
         solid = fem.SolidBodyNearlyIncompressible(viscoelastic(dtime), field, bulk=20.0)
-
-    # the inelastic right Cauchy-Green deformation tensor is initialized by identity
-    solid.results.statevars[[0, 3, 5]] = 1.0
 
     return field, boundaries, solid
 
@@ -77,7 +74,7 @@ def test_time_step_job(Body):
     )
 
     # the deformation is viscoelastic
-    assert not np.allclose(solid.results.statevars[[0, 3, 5]], 1.0)
+    assert not np.allclose(solid.results.statevars, 0.0)
 
 
 def test_time_step_cutback():
@@ -125,7 +122,8 @@ def test_time_step_cutback():
         boundaries=boundaries_old,
     )
     cutback = fem.CutbackPlugin()
-    fem.Job(steps=[step], plugins=[cutback]).evaluate(verbose=0, maxiter=6)
+    with pytest.warns(UserWarning, match="constant time increment"):
+        fem.Job(steps=[step], plugins=[cutback]).evaluate(verbose=0, maxiter=6)
 
     assert cutback.load_factors[1] == load_factors
     assert not np.allclose(solid_old.results.statevars, solid_ref.results.statevars)

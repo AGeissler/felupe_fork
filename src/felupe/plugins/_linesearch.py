@@ -253,7 +253,8 @@ class LinesearchPlugin(Plugin):
     the last evaluated trial. Hence, the (temporary) state variables of the items belong
     to the accepted trial. A given ``update`` function of the Newton-Raphson method is
     called with the scaled increment, ``update(x_n, alpha * dx)``, and must return a
-    new object. The scaled increment is passed to ``check`` and ``callback``.
+    new object. The scaled increment is passed to ``check`` and to the plugins with the
+    hook ``after_iteration`` (by ``state.dx``).
 
     ..  note::
 
@@ -286,7 +287,7 @@ class LinesearchPlugin(Plugin):
     >>> mesh = fem.Cube(n=3)
     >>> region = fem.RegionHexahedron(mesh)
     >>> field = fem.FieldContainer([fem.Field(region, dim=3)])
-    >>> boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+    >>> boundaries = fem.dof.uniaxial(field, clamped=True)
     >>> solid = fem.SolidBody(umat=fem.NeoHooke(mu=1.0, bulk=5.0), field=field)
     >>>
     >>> move = fem.math.linsteps([0, -0.7], num=1)

@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-
-from tensortrax.math import trace
+from tensortrax.math import base, no_variation, trace
 from tensortrax.math.linalg import det, inv
 from tensortrax.math.special import from_triu_1d, triu_1d
 
 
-def finite_strain_viscoelastic(C, Cin, mu, eta, dtime):
+def finite_strain_viscoelastic(C, statevars, mu, eta, dtime):
     r"""Multiplicative
     `finite strain viscoelastic <https://doi.org/10.1016/j.cma.2013.07.004>`_ [1]_
     material formulation.
@@ -58,19 +57,31 @@ def finite_strain_viscoelastic(C, Cin, mu, eta, dtime):
 
     Examples
     --------
+    The material is time-dependent, i.e. the time increment is an input of the
+    material, like the deformation gradient. The load case of the force-stretch curve
+    includes the (absolute) times, here with a constant stretch rate of 0.1 per unit
+    time.
+
     ..  plot::
 
         >>> import felupe as fem
         >>>
         >>> umat = fem.Hyperelastic(
-        ...     fem.finite_strain_viscoelastic, mu=1.0, eta=1.0, dtime=1.0, nstatevars=6
+        ...     fem.finite_strain_viscoelastic, mu=1.0, eta=1.0, nstatevars=6
         ... )
+        >>> stretches = fem.math.linsteps([1, 1.5, 1, 2, 1], num=[5, 5, 10, 10])
+        >>> times = fem.math.linsteps([0, 5, 10, 20, 30], num=[5, 5, 10, 10])
         >>> ax = umat.plot(
         ...    incompressible=True,
-        ...    ux=fem.math.linsteps([1, 1.5, 1, 2, 1], num=[5, 5, 10, 10]),
+        ...    ux=[stretches, times],
         ...    ps=None,
         ...    bx=None,
         ... )
+
+    In a job, the time increment is given by the time increment of a solid body, which
+    is updated by a :class:`~felupe.TimeStep`, see :class:`~felupe.SolidBody`. A time
+    increment which is given as material parameter, e.g. ``dtime=1.0``, is a constant
+    material parameter.
 
     References
     ----------
@@ -84,11 +95,17 @@ def finite_strain_viscoelastic(C, Cin, mu, eta, dtime):
     J3 = det(C) ** (-1 / 3)
 
     # update of state variables by evolution equation
-    Ci = from_triu_1d(Cin[:6], like=C) + (mu / eta * dtime) * (J3 * C)
-    Ci = det(Ci) ** (-1 / 3) * Ci
+    eye = base.eye(C)
+    Cin = eye + from_triu_1d(statevars[:6], like=C)
+    Ci = Cin + (mu / eta * dtime) * (J3 * C)
+    Ci = no_variation(det(Ci) ** (-1 / 3) * Ci)
 
     # first invariant of elastic part of right Cauchy-Green deformation tensor
-    I1 = J3 * trace(C @ inv(Ci))
+    I1 = J3 * trace(inv(Ci) @ C)
 
-    # strain energy function and state variable
-    return mu / 2 * (I1 - 3), triu_1d(Ci)
+    # strain energy function
+    ψ = mu / 2 * (I1 - 3)
+
+    # new state variables
+    statevars_new = triu_1d(Ci - eye)
+    return ψ, statevars_new

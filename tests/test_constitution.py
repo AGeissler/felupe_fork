@@ -614,29 +614,35 @@ def test_umat_viscoelastic(close_figs=True):
 
     import tensortrax.math as tm
 
-    def viscoelastic(C, Cin, mu, eta, dtime):
+    def viscoelastic(C, statevars, mu, eta, dtime):
         "Finite strain viscoelastic material formulation."
-        Ci = (
-            tm.special.from_triu_1d(Cin, like=C)
-            + mu / eta * dtime * tm.linalg.det(C) ** (-1 / 3) * C
-        )
+        eye = tm.base.eye(C)
+        Cin = eye + tm.special.from_triu_1d(statevars[:6], like=C)
+        Ci = Cin + mu / eta * dtime * tm.linalg.det(C) ** (-1 / 3) * C
         Ci = tm.linalg.det(Ci) ** (-1 / 3) * Ci
-        I1 = tm.linalg.det(C) ** (-1 / 3) * tm.trace(C @ tm.linalg.inv(Ci))
+        invCi = tm.linalg.inv(Ci)
+        I1 = tm.linalg.det(C) ** (-1 / 3) * tm.trace(C @ invCi)
 
-        return mu / 2 * (I1 - 3), tm.special.triu_1d(Ci)
+        # strain energy function and incremental dissipation potential
+        ψ = mu / 2 * (I1 - 3)
+        φ = eta / (2 * dtime) * (tm.trace(Cin @ invCi) - 3)
 
-    kwargs = {"mu": 1, "eta": 1, "dtime": 1}
+        return ψ + φ, tm.special.triu_1d(Ci - eye)
+
+    kwargs = {"mu": 1, "eta": 1}
     umat = fem.Hyperelastic(viscoelastic, nstatevars=6, **kwargs)
+    assert umat.time_dependent
 
     statevars = np.zeros((6, *F.shape[-2:]))
-    s, statevars_new = umat.gradient([F, statevars])
-    dsde = umat.hessian([F, statevars])
+    s, statevars_new = umat.gradient([F, statevars], dtime=1.0)
+    dsde = umat.hessian([F, statevars], dtime=1.0)
 
     umat = fem.Hyperelastic(
         fem.constitution.finite_strain_viscoelastic, nstatevars=6, **kwargs
     )
+    stretches = fem.math.linsteps([1, 1.5, 1, 2, 1, 2.5, 1], num=15)
     ax = umat.plot(
-        ux=fem.math.linsteps([1, 1.5, 1, 2, 1, 2.5, 1], num=15),
+        ux=[stretches, np.arange(len(stretches))],
         ps=None,
         bx=None,
         incompressible=True,
@@ -645,44 +651,44 @@ def test_umat_viscoelastic(close_figs=True):
     if close_figs:
         plt.close(ax.get_figure())
 
-    s2, statevars_new = umat.gradient([F, statevars])
-    dsde2 = umat.hessian([F, statevars])
+    s2, statevars_new = umat.gradient([F, statevars], dtime=1.0)
+    dsde2 = umat.hessian([F, statevars], dtime=1.0)
 
     assert np.allclose(s, s2)
     assert np.allclose(dsde, dsde2)
 
 
 def test_umat_viscoelastic2():
-    r, x = pre(sym=False, add_identity=True)
+    r, x = pre(sym=False, add_identity=True, add_random=True)
     F = x[0]
 
     import tensortrax.math as tm
 
-    def viscoelastic(F, Cin, mu, eta, dtime):
+    def viscoelastic(F, statevars, mu, eta, dtime):
         "Finite strain viscoelastic material formulation."
         C = tm.dot(tm.transpose(F), F)
         Cu = tm.linalg.det(C) ** (-1 / 3) * C
-        Ci = (
-            tm.special.from_triu_1d(Cin, like=C)
-            + mu / eta * dtime * tm.linalg.det(C) ** (-1 / 3) * C
-        )
+        eye = tm.base.eye(C)
+        Cin = eye + tm.special.from_triu_1d(statevars[:6], like=C)
+        Ci = Cin + mu / eta * dtime * Cu
         Ci = tm.linalg.det(Ci) ** (-1 / 3) * Ci
-        S = mu * tm.special.dev(Cu @ tm.linalg.inv(Ci)) @ tm.linalg.inv(C)
-        return F @ S, tm.special.triu_1d(Ci)
+        S = mu * tm.linalg.inv(C) @ tm.special.dev(Cu @ tm.linalg.inv(Ci))
+        return F @ S, tm.special.triu_1d(Ci - eye)
 
-    kwargs = {"mu": 1, "eta": 1, "dtime": 1}
+    kwargs = {"mu": 1, "eta": 1}
     umat = fem.MaterialAD(viscoelastic, nstatevars=6, **kwargs)
+    assert umat.time_dependent
 
     statevars = np.zeros((6, *F.shape[-2:]))
-    s, statevars_new = umat.gradient([F, statevars])
-    dsde = umat.hessian([F, statevars])
+    s, statevars_new = umat.gradient([F, statevars], dtime=1.0)
+    dsde = umat.hessian([F, statevars], dtime=1.0)
 
     umat = fem.Hyperelastic(
         fem.constitution.finite_strain_viscoelastic, nstatevars=6, **kwargs
     )
 
-    s2, statevars_new = umat.gradient([F, statevars])
-    dsde2 = umat.hessian([F, statevars])
+    s2, statevars_new = umat.gradient([F, statevars], dtime=1.0)
+    dsde2 = umat.hessian([F, statevars], dtime=1.0)
 
     assert np.allclose(s, s2)
     assert np.allclose(dsde, dsde2)
@@ -704,6 +710,15 @@ def test_umat_strain():
         s, statevars_new = umat.gradient([F, statevars])
         dsde = umat.hessian([F, statevars])
 
+        # the rotation tensor is only returned by the co-rotational framework
+        *_, rotation = umat.extract([F, statevars])
+
+        if framework == "co-rotational":
+            RTR = fem.math.dot(fem.math.transpose(rotation), rotation)
+            assert np.allclose(RTR, fem.math.identity(F))
+        else:
+            assert rotation is None
+
     with pytest.raises(NotImplementedError):
         umat = fem.MaterialStrain(
             material=fem.constitution.linear_elastic,
@@ -714,6 +729,223 @@ def test_umat_strain():
 
         s, statevars_new = umat.gradient([F, statevars])
         dsde = umat.hessian([F, statevars])
+
+
+def umat_strain_frameworks_input(seed=13, shape=(2, 3)):
+    "Deformation gradients with large rotations and old states of plasticity."
+
+    rng = np.random.default_rng(seed)
+
+    def symmetric(scale):
+        A = scale * rng.uniform(-1, 1, (3, 3, *shape))
+        return (A + np.einsum("ij...->ji...", A)) / 2
+
+    # deformation gradients with large rotations and non-trivial stretches
+    Q, _, Vh = np.linalg.svd(rng.uniform(-1, 1, (*shape, 3, 3)))
+    R = Q @ Vh * np.linalg.det(Q @ Vh)[..., None, None]
+    R = np.einsum("...ij->ij...", R)
+    U = np.eye(3).reshape(3, 3, 1, 1) + symmetric(0.4)
+    F = np.einsum("ik...,kj...->ij...", R, U)
+
+    # old states of the elastic-plastic material: hardening, plastic strain, strain and
+    # stress of the previous increment
+    statevars = np.concatenate(
+        [
+            np.full((1, *shape), 0.03),
+            symmetric(0.02).reshape(9, *shape),
+            symmetric(0.05).reshape(9, *shape),
+            symmetric(0.05).reshape(9, *shape),
+        ]
+    )
+
+    return F, statevars
+
+
+def finite_differences(umat, F, statevars, h=1e-6, **kwargs):
+    "Central finite differences of the first Piola-Kirchhoff stress tensor."
+
+    dPdF = np.zeros((3, 3, *F.shape))
+
+    for k, L in np.ndindex(3, 3):
+        dF = np.zeros_like(F)
+        dF[k, L] = h
+        P_plus = umat.gradient([F + dF, statevars], **kwargs)[0]
+        P_minus = umat.gradient([F - dF, statevars], **kwargs)[0]
+        dPdF[:, :, k, L] = (P_plus - P_minus) / (2 * h)
+
+    return dPdF
+
+
+def test_umat_strain_tangent():
+    "The elasticity tensors of the frameworks are the derivatives of the stresses."
+
+    F, statevars_plastic = umat_strain_frameworks_input()
+
+    elastic = dict(material=fem.linear_elastic, λ=2.0, μ=1.0)
+    plastic = dict(
+        material=fem.linear_elastic_plastic_isotropic_hardening,
+        λ=2.0,
+        μ=1.0,
+        σy=0.05,
+        K=0.1,
+        statevars=(1, (3, 3)),
+    )
+    statevars_elastic = np.zeros((18, *F.shape[2:]))
+
+    frameworks = [
+        dict(framework="small-strain"),
+        dict(framework="total-lagrange"),
+        dict(framework="co-rotational"),
+        *[dict(framework="seth-hill", strain_exponent=m) for m in [-2, 0, 0.5, 3]],
+    ]
+
+    for framework in frameworks:
+        for kwargs, statevars in [
+            (elastic, statevars_elastic),
+            (plastic, statevars_plastic),
+        ]:
+            umat = fem.MaterialStrain(**framework, **kwargs)
+
+            dPdF = umat.hessian([F, statevars])[0]
+            dPdF = np.broadcast_to(dPdF, (3, 3, *F.shape))
+
+            assert np.allclose(
+                dPdF, finite_differences(umat, F, statevars), rtol=1e-6, atol=1e-6
+            )
+
+
+def test_umat_strain_seth_hill():
+    "The Seth-Hill framework with equal eigenvalues and its special cases."
+
+    F, statevars = umat_strain_frameworks_input()
+
+    def anisotropic_elastic(dε, εn, σn, ζn, **kwargs):
+        "A linear-elastic material with a preferred direction."
+        I = np.eye(3)
+        A = np.outer([0.6, 0.8, 0.0], [0.6, 0.8, 0.0])
+        C = (
+            np.einsum("ij,kl->ijkl", I, I)
+            + np.einsum("ik,jl->ijkl", I, I)
+            + np.einsum("il,jk->ijkl", I, I)
+            + 20 * np.einsum("ij,kl->ijkl", A, A)
+        ).reshape(3, 3, 3, 3, 1, 1)
+        σ = np.einsum("ijkl...,kl...->ij...", C, εn + dε)
+        return C if kwargs["tangent"] else None, σ, ζn
+
+    plastic = dict(
+        material=fem.linear_elastic_plastic_isotropic_hardening,
+        λ=2.0,
+        μ=1.0,
+        σy=0.05,
+        K=0.1,
+        statevars=(1, (3, 3)),
+    )
+
+    # the special cases of the Total-Lagrange and the co-rotational framework
+    for framework, m in [("total-lagrange", 2), ("co-rotational", 1)]:
+        umat = fem.MaterialStrain(**plastic, framework=framework)
+        umat_m = fem.MaterialStrain(**plastic, framework="seth-hill", strain_exponent=m)
+
+        P, statevars_new = umat.gradient([F, statevars])
+        P_m, statevars_new_m = umat_m.gradient([F, statevars])
+
+        assert umat.strain_exponent == m
+        assert np.allclose(P, P_m)
+        assert np.allclose(statevars_new, statevars_new_m)
+        assert np.allclose(umat.hessian([F, statevars]), umat_m.hessian([F, statevars]))
+
+    # two equal and three equal eigenvalues (pure rotation and no deformation)
+    decomposition = fem.math.svd(F[..., :1, :1])
+    R = fem.math.dot(decomposition.U, decomposition.Vh)
+    stretch = np.diag([1.2, 1.2, 0.8]).reshape(3, 3, 1, 1)
+    statevars_elastic = np.zeros((18, 1, 1))
+
+    for F_equal in [fem.math.dot(R, stretch), R, np.eye(3).reshape(3, 3, 1, 1)]:
+        for m in [-2, 0, 0.5, 1, 3]:
+            umat = fem.MaterialStrain(
+                anisotropic_elastic, framework="seth-hill", strain_exponent=m
+            )
+            dPdF = umat.hessian([F_equal, statevars_elastic])[0]
+            dPdF_fd = finite_differences(umat, F_equal, statevars_elastic)
+            assert np.allclose(dPdF, dPdF_fd, rtol=1e-6, atol=1e-6)
+
+    # the logarithmic strain tensor is work-conjugate to the Kirchhoff stress tensor,
+    # i.e. an isotropic linear-elastic material leads to the Hencky material
+    umat = fem.MaterialStrain(
+        fem.linear_elastic, λ=2.0, μ=1.0, framework="seth-hill", strain_exponent=0
+    )
+    P = umat.gradient([F, np.zeros((18, *F.shape[2:]))])[0]
+    τ = fem.math.dot(P, fem.math.transpose(F))
+
+    b, n = fem.math.eigh(fem.math.dot(F, fem.math.transpose(F)))
+    ln_V = np.einsum("ia...,a...,ja...->ij...", n, np.log(b) / 2, n)
+    τ_hencky = 2 * ln_V + 2 * fem.math.trace(ln_V) * fem.math.identity(F)
+    assert np.allclose(τ, τ_hencky)
+
+    # the strain exponent is required by (and only allowed for) the Seth-Hill framework
+    with pytest.raises(ValueError, match="requires the argument `strain_exponent`"):
+        fem.MaterialStrain(fem.linear_elastic, λ=2.0, μ=1.0, framework="seth-hill")
+
+    with pytest.raises(ValueError, match="only supported by the framework"):
+        fem.MaterialStrain(
+            fem.linear_elastic,
+            λ=2.0,
+            μ=1.0,
+            framework="co-rotational",
+            strain_exponent=1,
+        )
+
+
+def test_umat_strain_corotational_stress():
+    "The stress of the co-rotational framework is work-conjugate to the Biot strain."
+
+    F, statevars_plastic = umat_strain_frameworks_input()
+    statevars_elastic = np.zeros((18, *F.shape[2:]))
+
+    def polar(F):
+        decomposition = fem.math.svd(F)
+        R = fem.math.dot(decomposition.U, decomposition.Vh)
+        return R, fem.math.dot(fem.math.transpose(R), F)
+
+    R, U = polar(F)
+
+    # elastic-plastic material: the Biot stress is not coaxial with the stretch tensor
+    umat = fem.MaterialStrain(
+        material=fem.linear_elastic_plastic_isotropic_hardening,
+        λ=2.0,
+        μ=1.0,
+        σy=0.05,
+        K=0.1,
+        statevars=(1, (3, 3)),
+        framework="co-rotational",
+    )
+    P, statevars_new = umat.gradient([F, statevars_plastic])
+    dPdF = umat.hessian([F, statevars_plastic])[0]
+
+    # (new) Biot stress of the material
+    T = statevars_new[-9:].reshape(F.shape)
+    assert not np.allclose(fem.math.dot(T, U), fem.math.dot(U, T))
+
+    # P : δF = T : δU
+    h = 1e-6
+    dF = h * np.random.default_rng(5).uniform(-1, 1, F.shape)
+    dU = (polar(F + dF)[1] - polar(F - dF)[1]) / 2
+    assert np.allclose(fem.math.ddot(P, dF), fem.math.ddot(T, dU), rtol=1e-6, atol=0)
+
+    # symmetric Kirchhoff stress tensor (balance of angular momentum)
+    τ = fem.math.dot(P, fem.math.transpose(F))
+    assert np.allclose(τ, fem.math.transpose(τ))
+
+    # the symmetric elasticity tensor of the material leads to a symmetric tangent
+    assert np.allclose(dPdF, np.einsum("iJkL...->kLiJ...", dPdF))
+
+    # isotropic elastic material: the Biot stress is coaxial with the stretch tensor
+    umat = fem.MaterialStrain(
+        material=fem.linear_elastic, λ=2.0, μ=1.0, framework="co-rotational"
+    )
+    P, statevars_new = umat.gradient([F, statevars_elastic])
+    T = statevars_new[-9:].reshape(F.shape)
+    assert np.allclose(P, fem.math.dot(R, T))
 
 
 def test_umat_strain_plasticity():
@@ -747,12 +979,12 @@ def test_umat_strain_viscoelasticity():
         μ=1.0,
         G=[3.0, 15.0],
         τ=[10.0, 100.0],
-        Δt=5.0,
         statevars=((2, 3, 3),),
     )
+    assert umat.time_dependent
 
-    s, statevars_new = umat.gradient([F, statevars])
-    dsde = umat.hessian([F, statevars])
+    s, statevars_new = umat.gradient([F, statevars], dtime=5.0)
+    dsde = umat.hessian([F, statevars], dtime=5.0)
 
 
 def test_elpliso():
@@ -892,6 +1124,130 @@ def test_optimize(close_figs=True):
 
         if close_figs:
             plt.close(ax.get_figure())
+
+
+def optimize_data(umat, incompressible, **load_cases):
+    "Return synthetic experimental data of load cases (stretches and forces)."
+
+    view = umat.view(incompressible=incompressible, ux=None, ps=None, bx=None)
+    methods = {"ux": view.uniaxial, "ps": view.planar, "bx": view.biaxial}
+
+    return {
+        key: [stretches, methods[key](stretches)[1]]
+        for key, stretches in load_cases.items()
+    }
+
+
+def test_optimize_load_cases():
+    "The predicted and the observed forces are paired for all combinations."
+
+    stretches = fem.math.linsteps([1, 2], num=7)
+    data = optimize_data(
+        fem.Hyperelastic(fem.neo_hooke, mu=1.5),
+        incompressible=True,
+        ux=stretches,
+        ps=stretches,
+        bx=stretches,
+    )
+
+    for keys in [
+        ["ux"],
+        ["ps"],
+        ["bx"],
+        ["ux", "ps"],
+        ["ux", "bx"],
+        ["ps", "bx"],
+        ["ux", "ps", "bx"],
+    ]:
+        umat = fem.Hyperelastic(fem.neo_hooke, mu=1.0)
+        umat_new, res = umat.optimize(
+            **{key: data[key] for key in keys}, incompressible=True
+        )
+
+        assert len(res.fun) == 8 * len(keys)
+        assert np.isclose(umat_new.kwargs["mu"], 1.5)
+        assert res.cost < 1e-16
+
+    # the planar shear data is not ignored, e.g. of another material
+    data_ps = optimize_data(
+        fem.Hyperelastic(fem.neo_hooke, mu=3.0), incompressible=True, ps=stretches
+    )
+    umat_new, res = fem.Hyperelastic(fem.neo_hooke, mu=1.0).optimize(
+        ux=data["ux"], ps=data_ps["ps"], incompressible=True
+    )
+    assert 1.5 < umat_new.kwargs["mu"] < 3.0
+
+    with pytest.raises(ValueError, match="At least one load case"):
+        fem.Hyperelastic(fem.neo_hooke, mu=1.0).optimize()
+
+
+def test_optimize_parameters():
+    """The material parameters are set on the materials, which store them as attributes
+    or in other materials."""
+
+    stretches = fem.math.linsteps([1, 1.5], num=7)
+
+    # material parameters as attributes
+    data = optimize_data(fem.NeoHooke(mu=1.5), incompressible=True, ux=stretches)
+    umat_new, res = fem.NeoHooke(mu=1.0).optimize(**data, incompressible=True)
+
+    assert np.isclose(umat_new.kwargs["mu"], 1.5)
+    assert np.isclose(umat_new.mu, 1.5)
+
+    # material parameters of the materials of a composite material
+    data = optimize_data(
+        fem.NeoHooke(mu=1.5) & fem.Volumetric(bulk=5.0),
+        incompressible=False,
+        ux=stretches,
+        bx=stretches,
+    )
+    umat = fem.NeoHooke(mu=1.0) & fem.Volumetric(bulk=2.0)
+    umat_new, res = umat.optimize(**data)
+
+    assert np.isclose(umat_new.materials[0].mu, 1.5)
+    assert np.isclose(umat_new.materials[1].bulk, 5.0)
+    assert umat.materials[0].mu == 1.0  # the original material is not changed
+
+    # material parameters of a material with a derived material
+    data = optimize_data(
+        fem.LinearElasticLargeStrain(E=2.0, nu=0.3),
+        incompressible=False,
+        ux=stretches,
+        bx=stretches,
+    )
+    umat_new, res = fem.LinearElasticLargeStrain(E=1.0, nu=0.25).optimize(**data)
+    lmbda, mu = fem.constitution.lame_converter(2.0, 0.3)
+
+    assert np.allclose([umat_new.E, umat_new.nu], [2.0, 0.3])
+    assert np.allclose([umat_new.material.lmbda, umat_new.material.mu], [lmbda, mu])
+
+    # material parameters of the pseudo-elastic and of the hyperelastic material
+    cycles = fem.math.linsteps([1, 2, 1, 2.5], num=[8, 8, 8])
+    true = fem.OgdenRoxburgh(fem.NeoHooke(mu=1.5), r=3.0, m=0.5, beta=0.1)
+    data = optimize_data(true, incompressible=True, ux=cycles)
+    umat = fem.OgdenRoxburgh(fem.NeoHooke(mu=1.2), r=2.5, m=0.6, beta=0.15)
+    umat_new, res = umat.optimize(**data, incompressible=True)
+
+    # the parameters m and beta are not unique for these load cases
+    assert res.cost < 1e-16
+    assert np.isclose(umat_new.r, 3.0)
+    assert np.isclose(umat_new.material.mu, 1.5)
+    assert np.isclose(umat_new.kwargs["mu"], 1.5)
+
+    # a material which is not derived from ConstitutiveMaterial in a composite
+    class External:
+        def __init__(self, mu):
+            self.kwargs = {"mu": mu}
+            self.x = [np.eye(3), np.zeros(0)]
+
+        def gradient(self, x):
+            F = x[0]
+            return [self.kwargs["mu"] * (F - fem.math.identity(F)), x[-1]]
+
+    composite = fem.Volumetric(bulk=5.0) & External(mu=1.0)
+    composite._set_parameters({"mu": 2.0, "bulk": 3.0})
+    assert composite.materials[1].kwargs["mu"] == 2.0
+    assert composite.materials[0].bulk == 3.0
 
 
 def test_lagrange():
@@ -1306,11 +1662,16 @@ if __name__ == "__main__":
     test_umat_viscoelastic(close_figs=close_figs)
     test_umat_viscoelastic2()
     test_umat_strain()
+    test_umat_strain_tangent()
+    test_umat_strain_seth_hill()
+    test_umat_strain_corotational_stress()
     test_umat_strain_plasticity()
     test_elpliso()
     test_umat_strain_optimize()
     test_composite(close_figs=close_figs)
     test_optimize(close_figs=close_figs)
+    test_optimize_load_cases()
+    test_optimize_parameters()
     test_lagrange()
     test_lagrange_statevars()
     test_laplace()

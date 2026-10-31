@@ -313,7 +313,7 @@ class SolidBodyNearlyIncompressible(Solid):
         >>> mesh = fem.Cube(n=6)
         >>> region = fem.RegionHexahedron(mesh)
         >>> field = fem.FieldContainer([fem.Field(region, dim=3)])
-        >>> boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+        >>> boundaries = fem.dof.uniaxial(field, clamped=True)
         >>>
         >>> umat = fem.NeoHooke(mu=1)
         >>> solid = fem.SolidBodyNearlyIncompressible(umat, field, bulk=5000)
@@ -455,9 +455,7 @@ class SolidBodyNearlyIncompressible(Solid):
             solid = fem.SolidBodyNearlyIncompressible(umat=umat, field=field, bulk=5000)
 
             # 1. vertical compression
-            boundaries = fem.dof.uniaxial(
-                field, clamped=True, sym=False, axis=1, return_loadcase=False
-            )
+            boundaries = fem.dof.uniaxial(field, clamped=True, sym=False, axis=1)
             ramp = {boundaries["move"]: fem.math.linsteps([0, -0.2], num=2)}
             step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
             job = fem.Job(steps=[step]).evaluate()
@@ -466,9 +464,7 @@ class SolidBodyNearlyIncompressible(Solid):
             checkpoint = solid.checkpoint()
 
             # 2a. horizontal shear (right)
-            boundaries = fem.dof.shear(
-                field, sym=False, moves=(0, 0, -0.2), return_loadcase=False
-            )
+            boundaries = fem.dof.shear(field, sym=False, moves=(0, 0, -0.2))
             ramp = {boundaries["move"]: fem.math.linsteps([0, 1], num=2)}
             step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
             job = fem.Job(steps=[step]).evaluate()
@@ -477,9 +473,7 @@ class SolidBodyNearlyIncompressible(Solid):
             solid.restore(checkpoint)
 
             # 2b. horizontal shear (left)
-            boundaries = fem.dof.shear(
-                field, sym=False, moves=(0, 0, -0.2), return_loadcase=False
-            )
+            boundaries = fem.dof.shear(field, sym=False, moves=(0, 0, -0.2))
             ramp = {boundaries["move"]: fem.math.linsteps([0, -1], num=2)}
             step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
             job = fem.Job(steps=[step]).evaluate()
@@ -598,14 +592,13 @@ class SolidBodyNearlyIncompressible(Solid):
             time_step=self.time_step,
         )
 
-        # expand state variables (no rotation is applied here)
+        # expand state variables along the trailing axes of the quadrature points and
+        # the cells, i.e. the components are not repeated (no rotation is applied here)
         new_shape = np.array(new_solid.results.statevars.shape)
         old_shape = np.array(self.results.statevars.shape)
 
-        # ratio of shape of new vs. old state variables
-        reps = np.zeros(len(new_shape), dtype=int)
-        reps[0] = new_shape[0]
-        reps[1:] = new_shape[1:] // old_shape[1:]
+        reps = np.ones(len(new_shape), dtype=int)
+        reps[-2:] = new_shape[-2:] // old_shape[-2:]
 
         new_solid.results.statevars[:] = np.tile(self.results.statevars, reps)
 

@@ -3,12 +3,13 @@
 import contextlib
 import pathlib
 import tempfile
+import warnings
 
 import numpy as np
 import pytest
 
 import felupe as fem
-from felupe.plugins._cutback import interpolate
+from felupe.plugins._cutback import constant_time_increment, interpolate
 
 
 class FailingNewton(fem.Plugin):
@@ -62,31 +63,37 @@ class Recorder(fem.Plugin):
 
 
 def viscoelastic():
-    "A (distortional) finite strain viscoelastic material with state variables."
+    """A (distortional) finite strain viscoelastic material with state variables. The
+    material is time-dependent, i.e. it takes the time increment of the solid body."""
     return fem.Hyperelastic(
         fem.constitution.finite_strain_viscoelastic,
         nstatevars=6,
         mu=1.0,
         eta=1.0,
-        dtime=0.1,
     )
 
 
+def with_time(ramp, solid, values):
+    """Add a time step item to the ramp of a step for a solid body with a time-dependent
+    material. The time is proportional to the given values (a constant rate), i.e. it
+    is interpolated like the values by a cutback."""
+    if getattr(solid.umat, "time_dependent", False):
+        ramp[fem.TimeStep(items=[solid])] = np.asarray(values, dtype=float)
+    return ramp
+
+
 def initial_statevars(umat, region):
-    """Return the initial state variables. The inelastic right Cauchy-Green deformation
-    tensor of the viscoelastic material is initialized by the identity."""
+    """Return the initial (all-zero) state variables. The inelastic right Cauchy-Green
+    deformation tensor of the viscoelastic material is the identity."""
     shape = (*umat.x[-1].shape, region.quadrature.npoints, region.mesh.ncells)
-    statevars = np.zeros(shape)
-    if shape[0] == 6:
-        statevars[[0, 3, 5]] = 1.0
-    return statevars
+    return np.zeros(shape)
 
 
 def cube(umat=None, nearly_incompressible=False, bulk=5.0):
     "A (coarse) cube with a uniaxial load case."
     region = fem.RegionHexahedron(fem.Cube(n=3))
     field = fem.FieldContainer([fem.Field(region, dim=3)])
-    boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+    boundaries = fem.dof.uniaxial(field, clamped=True)
 
     if nearly_incompressible:
         if umat is None:
@@ -138,7 +145,9 @@ def run(ramp, plugins=None, **kwargs):
     the Newton-Raphson method are recorded in ``job.history``."""
     field, boundaries, solid = cube(**kwargs)
     step = fem.Step(
-        items=[solid], ramp={boundaries["move"]: ramp}, boundaries=boundaries
+        items=[solid],
+        ramp=with_time({boundaries["move"]: ramp}, solid, ramp),
+        boundaries=boundaries,
     )
     history = NewtonHistory()
     job = fem.Job(steps=[step], plugins=[*(plugins or []), history])
@@ -296,7 +305,7 @@ def test_step_generate_without_dispatcher():
         fem.SolidBody(fem.NeoHooke(mu=1.0, bulk=5.0), field_1),
         fem.SolidBody(fem.NeoHooke(mu=3.0, bulk=5.0), field_2),
     ]
-    boundaries = fem.dof.uniaxial(x0, clamped=True, return_loadcase=False)
+    boundaries = fem.dof.uniaxial(x0, clamped=True)
     step = fem.Step(
         items=solids, ramp={boundaries["move"]: ramp}, boundaries=boundaries
     )
@@ -380,6 +389,87 @@ def test_cutback_statevars(nearly_incompressible):
             value = getattr(solid.results.state, name)
             value_ref = getattr(solid_ref.results.state, name)
             assert np.allclose(value, value_ref, rtol=1e-12, atol=1e-14)
+
+
+def test_constant_time_increment():
+    "A material with a time increment as material parameter, also of wrapped materials."
+
+    kwargs = dict(nstatevars=6, mu=1.0, eta=1.0)
+    fun = fem.constitution.finite_strain_viscoelastic
+    constant = fem.Hyperelastic(fun, dtime=1.0, **kwargs)
+    time_dependent = fem.Hyperelastic(fun, **kwargs)
+
+    assert constant_time_increment(constant)
+    assert constant_time_increment(fem.Volumetric(bulk=5000.0) & constant)
+    assert constant_time_increment(fem.NearlyIncompressible(constant, bulk=5000.0))
+    assert constant_time_increment(fem.ThreeFieldVariation(constant))
+
+    # the (deprecated) former name of the time increment of linear_elastic_viscoelastic()
+    with pytest.warns(DeprecationWarning, match="`Δt` of `MaterialStrain`"):
+        umat = fem.MaterialStrain(
+            material=fem.linear_elastic_viscoelastic,
+            λ=2.0,
+            μ=1.0,
+            G=[3.0],
+            τ=[10.0],
+            Δt=1.0,
+            statevars=((1, 3, 3),),
+        )
+
+    assert constant_time_increment(umat)
+
+    assert not constant_time_increment(time_dependent)
+    assert not constant_time_increment(fem.Volumetric(bulk=5000.0) & time_dependent)
+    assert not constant_time_increment(
+        fem.NearlyIncompressible(time_dependent, bulk=5000.0)
+    )
+    assert not constant_time_increment(fem.NeoHooke(mu=1.0))
+    assert not constant_time_increment(None)
+
+
+@pytest.mark.parametrize("nearly_incompressible", [False, True])
+def test_cutback_constant_time_increment(nearly_incompressible):
+    """A constant time increment is not scaled by the cutback, i.e. a subdivided
+    substep is not identical to explicit substeps. This is warned once."""
+
+    def constant():
+        return fem.Hyperelastic(
+            fem.constitution.finite_strain_viscoelastic,
+            nstatevars=6,
+            mu=1.0,
+            eta=1.0,
+            dtime=1.0,
+        )
+
+    ramp = fem.math.linsteps([0, 0.3, 0.6], num=1)
+    model = dict(nearly_incompressible=nearly_incompressible)
+
+    # fail the full second and the full third substep
+    cutback = fem.CutbackPlugin()
+    failing = FailingNewton(calls=[1, 4], iteration=1)
+
+    with pytest.warns(UserWarning, match="constant time increment") as record:
+        field, solid, job = run(
+            ramp, plugins=[failing, cutback], umat=constant(), **model
+        )
+
+    assert cutback.load_factors == [[1.0], [0.5, 1.0], [0.5, 1.0]]
+    warned = [w for w in record if "constant time increment" in str(w.message)]
+    assert len(warned) == 1
+
+    # each increment takes the full time increment, like explicit substeps
+    reference, _, _ = run(refine(ramp, cutback.load_factors), umat=constant(), **model)
+    assert np.allclose(field[0].values, reference[0].values, rtol=1e-12, atol=1e-14)
+
+    # no warning for the time increment as input of a time-dependent material
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*constant time increment")
+        run(
+            ramp,
+            plugins=[FailingNewton(calls=[1, 4]), fem.CutbackPlugin()],
+            umat=viscoelastic(),
+            **model,
+        )
 
 
 def test_cutback_plasticity():
@@ -863,12 +953,19 @@ def test_cutback_multiple_steps_and_jobs():
 
     def steps(field, boundaries, solid):
         move = boundaries["move"]
+        time = fem.TimeStep(items=[solid])  # the time continues in the second step
+        values_1 = np.array([0.0, 0.2])
         step_1 = fem.Step(
-            items=[solid], ramp={move: np.array([0.0, 0.2])}, boundaries=boundaries
+            items=[solid],
+            ramp={move: values_1, time: values_1},
+            boundaries=boundaries,
         )
         # the first substep of the second step is a jump
+        values_2 = np.array([0.4, 0.5])
         step_2 = fem.Step(
-            items=[solid], ramp={move: np.array([0.4, 0.5])}, boundaries=boundaries
+            items=[solid],
+            ramp={move: values_2, time: values_2},
+            boundaries=boundaries,
         )
         return step_1, step_2
 
@@ -883,7 +980,11 @@ def test_cutback_multiple_steps_and_jobs():
     field_ref, boundaries, solid_ref = cube(umat=viscoelastic())
     move = boundaries["move"]
     ramp = np.array([0.0, 0.2, 0.3, 0.4, 0.5])
-    step = fem.Step(items=[solid_ref], ramp={move: ramp}, boundaries=boundaries)
+    step = fem.Step(
+        items=[solid_ref],
+        ramp=with_time({move: ramp}, solid_ref, ramp),
+        boundaries=boundaries,
+    )
     fem.Job(steps=[step]).evaluate(verbose=0)
 
     assert np.allclose(field[0].values, field_ref[0].values)
@@ -1189,7 +1290,7 @@ def test_cutback_merged_fields():
         solid_1 = fem.SolidBody(fem.NeoHooke(mu=1.0, bulk=5.0), field_1)
         solid_2 = fem.SolidBody(fem.NeoHooke(mu=3.0, bulk=5.0), field_2)
 
-        boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+        boundaries = fem.dof.uniaxial(field, clamped=True)
         step = fem.Step(
             items=[solid_1, solid_2],
             ramp={boundaries["move"]: ramp},

@@ -16,7 +16,7 @@ def pre(n=3, filename=None):
     mesh = fem.Cube(n=n)
     region = fem.RegionHexahedron(mesh)
     field = fem.FieldContainer([fem.Field(region, dim=3)])
-    boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+    boundaries = fem.dof.uniaxial(field, clamped=True)
     umat = fem.NeoHooke(mu=1)
     solid = fem.SolidBodyNearlyIncompressible(umat, field, bulk=5000)
     move = fem.math.linsteps([0, 1], num=3)
@@ -32,7 +32,7 @@ def pre_2d(n=3, filename=None):
     mesh = fem.Rectangle(n=n)
     region = fem.RegionQuad(mesh)
     field = fem.FieldContainer([fem.FieldPlaneStrain(region, dim=2)])
-    boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+    boundaries = fem.dof.uniaxial(field, clamped=True)
     umat = fem.NeoHooke(mu=1)
     solid = fem.SolidBodyNearlyIncompressible(umat, field, bulk=5000)
     move = fem.math.linsteps([0, 1], num=3)
@@ -46,23 +46,16 @@ def pre_2d(n=3, filename=None):
 
 def test_xdmf_cell_data(tmp_path):
     try:
-        import pyvista
-
         filename = str(tmp_path / "result.xdmf")
         with contextlib.chdir(tmp_path):  # meshio writes the h5-file to the cwd
             pre(n=3, filename=filename)
 
-        # TODO: Remove if pyvista has a release with ``XdmfReader`` included.
-        major, minor = pyvista.__version__.split(".")[:2]
-        if int(major) == 0 and int(minor) < 39:
-            print("Xdmf-Reader not available. Requires ``pyvista >= 0.39``.")
-        else:
-            view = fem.ViewXdmf(filename, time=3)
-            plotter = view.plot(
-                "Principal Values of Logarithmic Strain",
-                off_screen=True,
-            )
-            # plotter.show(screenshot="cube-xdmf.png")
+        view = fem.ViewXdmf(filename, time=3)
+        plotter = view.plot(
+            "Principal Values of Logarithmic Strain",
+            off_screen=True,
+        )
+        # plotter.show(screenshot="cube-xdmf.png")
 
     except ModuleNotFoundError:
         pass
@@ -70,24 +63,17 @@ def test_xdmf_cell_data(tmp_path):
 
 def test_xdmf_point_data(tmp_path):
     try:
-        import pyvista
-
         filename = str(tmp_path / "result.xdmf")
         with contextlib.chdir(tmp_path):  # meshio writes the h5-file to the cwd
             pre_2d(n=3, filename=filename)
 
-        # TODO: Remove if pyvista has a release with ``XdmfReader`` included.
-        major, minor = pyvista.__version__.split(".")[:2]
-        if int(major) == 0 and int(minor) < 39:
-            print("Xdmf-Reader not available. Requires ``pyvista >= 0.39``.")
-        else:
-            view = fem.ViewXdmf(filename, time=3)
-            plotter = view.plot(
-                "Displacement",
-                off_screen=True,
-                scalar_bar_vertical=True,
-            )
-            # plotter.show(screenshot="rectangle-xdmf.png")
+        view = fem.ViewXdmf(filename, time=3)
+        plotter = view.plot(
+            "Displacement",
+            off_screen=True,
+            scalar_bar_vertical=True,
+        )
+        # plotter.show(screenshot="rectangle-xdmf.png")
 
     except ModuleNotFoundError:
         pass

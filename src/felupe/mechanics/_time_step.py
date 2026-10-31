@@ -49,6 +49,14 @@ class TimeStep:
     interpolated and the time increment of each increment is the difference to the
     time of the last converged increment.
 
+    The solid bodies, e.g. :class:`~felupe.SolidBody`, pass their time increment to
+    time-dependent materials, e.g. to a viscoelastic material, see the examples of
+    :class:`~felupe.SolidBody`.
+
+    The (absolute) time of a time step item is written as the time of a XDMF result
+    file by ``Job(steps).evaluate(filename="result.xdmf", time=time)``, see
+    :class:`~felupe.XDMFWriterPlugin`.
+
     Examples
     --------
     ..  pyvista-plot::
@@ -77,6 +85,9 @@ class TimeStep:
     felupe.Step : A Step with multiple substeps, subsequently depending on the solution
         of the previous substep.
     felupe.CutbackPlugin : A cutback of the increment of failed substeps.
+    felupe.XDMFWriterPlugin : A job plugin to write XDMF files during job evaluation.
+    felupe.SolidBody : A SolidBody with methods for the assembly of sparse
+        vectors/matrices.
     felupe.thermal.SolidBodyThermal : A thermal solid body.
 
     """

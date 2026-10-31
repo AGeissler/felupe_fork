@@ -251,7 +251,7 @@ class SolidBody(Solid):
         >>> mesh = fem.Cube(n=6)
         >>> region = fem.RegionHexahedron(mesh)
         >>> field = fem.FieldContainer([fem.Field(region, dim=3)])
-        >>> boundaries = fem.dof.uniaxial(field, clamped=True, return_loadcase=False)
+        >>> boundaries = fem.dof.uniaxial(field, clamped=True)
         >>>
         >>> umat = fem.NeoHooke(mu=1, bulk=2)
         >>> solid = fem.SolidBody(umat, field)
@@ -269,16 +269,14 @@ class SolidBody(Solid):
     A time-dependent material, e.g. a viscoelastic material, takes the time increment
     of the solid body as input, like the deformation gradient. The time is ramped by a
     :class:`~felupe.TimeStep`, which updates the time increment of the solid body
-    before each substep. The state variables of the viscoelastic material, the
-    components of the upper triangle of the inelastic right Cauchy-Green deformation
-    tensor, are initialized by the identity tensor.
+    before each substep. The all-zero state variables of the viscoelastic material,
+    the components of the upper triangle of the deviation of the inelastic right
+    Cauchy-Green deformation tensor from the identity, are the undeformed state.
 
     >>> umat = fem.Hyperelastic(
     ...     fem.finite_strain_viscoelastic, mu=1.0, eta=1.0, nstatevars=6
     ... ) & fem.Volumetric(bulk=2.0)
     >>> solid = fem.SolidBody(umat, field)
-    >>> solid.results.statevars[[0, 3, 5]] = 1.0
-    >>>
     >>> time = fem.TimeStep(items=[solid])
     >>> step = fem.Step(
     ...     items=[solid],
@@ -380,9 +378,7 @@ class SolidBody(Solid):
             solid = fem.SolidBody(umat=umat, field=field)
 
             # 1. vertical compression
-            boundaries = fem.dof.uniaxial(
-                field, clamped=True, sym=False, axis=1, return_loadcase=False
-            )
+            boundaries = fem.dof.uniaxial(field, clamped=True, sym=False, axis=1)
             ramp = {boundaries["move"]: fem.math.linsteps([0, -0.2], num=2)}
             step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
             job = fem.Job(steps=[step]).evaluate()
@@ -391,9 +387,7 @@ class SolidBody(Solid):
             checkpoint = solid.checkpoint()
 
             # 2a. horizontal shear (right)
-            boundaries = fem.dof.shear(
-                field, sym=False, moves=(0, 0, -0.2), return_loadcase=False
-            )
+            boundaries = fem.dof.shear(field, sym=False, moves=(0, 0, -0.2))
             ramp = {boundaries["move"]: fem.math.linsteps([0, 1], num=2)}
             step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
             job = fem.Job(steps=[step]).evaluate()
@@ -402,9 +396,7 @@ class SolidBody(Solid):
             solid.restore(checkpoint)
 
             # 2b. horizontal shear (left)
-            boundaries = fem.dof.shear(
-                field, sym=False, moves=(0, 0, -0.2), return_loadcase=False
-            )
+            boundaries = fem.dof.shear(field, sym=False, moves=(0, 0, -0.2))
             ramp = {boundaries["move"]: fem.math.linsteps([0, -1], num=2)}
             step = fem.Step(items=[solid], ramp=ramp, boundaries=boundaries)
             job = fem.Job(steps=[step]).evaluate()
@@ -484,9 +476,7 @@ class SolidBody(Solid):
             >>> umat = fem.NeoHookeCompressible(mu=1, lmbda=2)
             >>> solid = fem.SolidBody(umat=umat, field=field)
             >>>
-            >>> boundaries = fem.dof.uniaxial(
-            ...     solid.field, clamped=True, sym=False, return_loadcase=False
-            ... )
+            >>> boundaries = fem.dof.uniaxial(solid.field, clamped=True, sym=False)
             >>> step = fem.Step(items=[solid], boundaries=boundaries)
             >>> job = fem.Job(steps=[step]).evaluate()
             >>>
@@ -502,7 +492,7 @@ class SolidBody(Solid):
 
             >>> new_solid = solid.revolve(n=11, phi=180)
             >>> boundaries = fem.dof.uniaxial(
-            ...     new_solid.field, clamped=True, sym=(0, 0, 1), return_loadcase=False
+            ...     new_solid.field, clamped=True, sym=(0, 0, 1)
             ... )
             >>>
             >>> step = fem.Step(items=[new_solid], boundaries=boundaries)
@@ -536,13 +526,13 @@ class SolidBody(Solid):
             time_step=self.time_step,
         )
 
-        # expand state variables (no rotation is applied here)
+        # expand state variables along the trailing axes of the quadrature points and
+        # the cells, i.e. the components are not repeated (no rotation is applied here)
         new_shape = np.array(new_solid.results.statevars.shape)
         old_shape = np.array(self.results.statevars.shape)
 
-        reps = np.zeros(len(new_shape), dtype=int)
-        reps[0] = new_shape[0]
-        reps[1:] = new_shape[1:] // old_shape[1:]
+        reps = np.ones(len(new_shape), dtype=int)
+        reps[-2:] = new_shape[-2:] // old_shape[-2:]
 
         new_solid.results.statevars[:] = np.tile(self.results.statevars, reps)
 
