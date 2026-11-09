@@ -26,6 +26,7 @@ e.g. for off-screen screenshots in vector formats (PDF or SVG).
 
    set_plotting_backend
    get_plotting_backend
+   view.auto_plotting_backend
    view.register_plotting_backend
    view.PlottingBackend
    view.WebGLPlotter
@@ -35,7 +36,8 @@ e.g. for off-screen screenshots in vector formats (PDF or SVG).
 
 .. autoclass:: felupe.view.Scene
 
-.. autofunction:: felupe.ViewMesh
+.. autoclass:: felupe.ViewMesh
+   :members: clip
 
 .. autofunction:: felupe.ViewField
 
@@ -50,6 +52,8 @@ e.g. for off-screen screenshots in vector formats (PDF or SVG).
 .. autofunction:: felupe.set_plotting_backend
 
 .. autofunction:: felupe.get_plotting_backend
+
+.. autofunction:: felupe.view.auto_plotting_backend
 
 .. autofunction:: felupe.view.register_plotting_backend
 
