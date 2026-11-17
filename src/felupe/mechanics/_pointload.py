@@ -76,6 +76,13 @@ class PointLoad:
         return UpdateItem(self, key)
 
     def update(self, values):
+        """Update the values of the point load inplace.
+
+        Parameters
+        ----------
+        values : array_like
+            The new values applied at the points.
+        """
         self._update_values(values)
 
     def _update_values(self, values):
@@ -93,8 +100,10 @@ class PointLoad:
             radius = mesh_points[self.points, 1].reshape(-1, 1)
             force[self.apply_on][self.points] *= 2 * np.pi * radius
 
+        dtype = np.result_type(*[f.values.dtype for f in self.field.fields])
         self.results.force = csr_matrix(
-            np.concatenate([f.ravel() for f in force]).reshape(-1, 1)
+            np.concatenate([f.ravel() for f in force]).reshape(-1, 1),
+            dtype=dtype,
         )
 
         return self.results.force
@@ -104,7 +113,10 @@ class PointLoad:
             self.field = field
 
         n = np.sum(self.field.fieldsizes)
-        self.results.stiffness = csr_matrix(([0.0], ([0], [0])), shape=(n, n))
+        dtype = np.result_type(*[f.values.dtype for f in self.field.fields])
+        self.results.stiffness = csr_matrix(
+            ([0.0], ([0], [0])), shape=(n, n), dtype=dtype
+        )
 
         return self.results.stiffness
 

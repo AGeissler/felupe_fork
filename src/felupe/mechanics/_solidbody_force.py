@@ -66,9 +66,11 @@ class SolidBodyForce:
         )
         self._form = IntegralForm
 
-        self.results.values = np.zeros(self.field[0].dim)
+        self.results.values = np.zeros(
+            self.field[0].dim, dtype=self.field[0].values.dtype
+        )
         if values is not None:
-            self.results.values = np.array(values)
+            self.results.values = np.array(values, dtype=self.field[0].values.dtype)
 
         self.results.scale = scale
 
@@ -76,10 +78,17 @@ class SolidBodyForce:
         return UpdateItem(self, key)
 
     def update(self, values):
+        r"""Update the values of the body force inplace.
+
+        Parameters
+        ----------
+        values : array_like
+            The new prescribed values, e.g. gravity :math:`\boldsymbol{g}`.
+        """
         self._update_values(values)
 
     def _update_values(self, values):
-        self.results.values = np.array(values)
+        self.results.values = np.array(values, dtype=self.field[0].values.dtype)
 
     def _update_scale(self, scale):
         self.results.scale = scale
@@ -109,6 +118,10 @@ class SolidBodyForce:
             self.field = field
 
         n = np.sum(self.field.fieldsizes)
-        self.results.stiffness = csr_matrix(([0.0], ([0], [0])), shape=(n, n))
+        self.results.stiffness = csr_matrix(
+            ([0.0], ([0], [0])),
+            shape=(n, n),
+            dtype=self.field[0].values.dtype,
+        )
 
         return self.results.stiffness
